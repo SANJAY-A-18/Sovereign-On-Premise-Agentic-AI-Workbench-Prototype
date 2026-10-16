@@ -29,9 +29,10 @@ def test_ui_unauthenticated_smoke():
     assert len(at.exception) == 0
 
     tab_labels = [t.label for t in at.tabs]
-    # Normal/unauthenticated user must NOT see Agents or Audit Log tabs
+    # Normal/unauthenticated user must NOT see Agents, Audit Log, or Evaluation tabs
     assert not any("Agents" in label for label in tab_labels)
     assert not any("Audit" in label for label in tab_labels)
+    assert not any("Evaluation" in label for label in tab_labels)
     # Must see Chat, Documents, Approvals, and Account
     assert any("Chat" in label for label in tab_labels)
     assert any("Documents" in label for label in tab_labels)
@@ -40,7 +41,7 @@ def test_ui_unauthenticated_smoke():
 
 
 def test_ui_normal_user_smoke():
-    """Verify normal user view: Agents and Audit tabs are hidden, zero exceptions."""
+    """Verify normal user view: Agents, Audit, and Evaluation tabs are hidden, zero exceptions."""
     at = AppTest.from_file("ui/app.py", default_timeout=15)
     at.session_state["token"] = "fake-jwt-token-for-user"
     at.session_state["user_info"] = {
@@ -54,13 +55,14 @@ def test_ui_normal_user_smoke():
     tab_labels = [t.label for t in at.tabs]
     assert not any("Agents" in label for label in tab_labels)
     assert not any("Audit" in label for label in tab_labels)
+    assert not any("Evaluation" in label for label in tab_labels)
     assert any("Chat" in label for label in tab_labels)
     assert any("Documents" in label for label in tab_labels)
     assert any("Approvals" in label for label in tab_labels)
 
 
 def test_ui_admin_user_smoke():
-    """Verify admin user view: Agents and Audit tabs are visible, zero exceptions."""
+    """Verify admin user view: Agents, Audit, and Evaluation tabs are visible, zero exceptions."""
     at = AppTest.from_file("ui/app.py", default_timeout=15)
     at.session_state["token"] = "fake-jwt-token-for-admin"
     at.session_state["user_info"] = {
@@ -74,3 +76,5 @@ def test_ui_admin_user_smoke():
     tab_labels = [t.label for t in at.tabs]
     assert any("Agents" in label for label in tab_labels)
     assert any("Audit" in label for label in tab_labels)
+    assert any("Evaluation" in label for label in tab_labels)
+

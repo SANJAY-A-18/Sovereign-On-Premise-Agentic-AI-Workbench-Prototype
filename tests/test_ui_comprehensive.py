@@ -120,7 +120,7 @@ def mock_backend_success():
 
 
 def test_ui_unauthenticated_view(mock_backend_success):
-    """Unauthenticated view displays login/register in Account tab, hides Agents & Audit tabs."""
+    """Unauthenticated view displays login/register in Account tab, hides Agents, Audit, & Evaluation tabs."""
     with patch("requests.get", side_effect=mock_backend_success):
         at = AppTest.from_file("ui/app.py", default_timeout=15)
         at.run()
@@ -129,6 +129,7 @@ def test_ui_unauthenticated_view(mock_backend_success):
         tab_labels = [t.label for t in at.tabs]
         assert not any("Agents" in l for l in tab_labels)
         assert not any("Audit" in l for l in tab_labels)
+        assert not any("Evaluation" in l for l in tab_labels)
         assert any("Chat" in l for l in tab_labels)
         assert any("Documents" in l for l in tab_labels)
         assert any("Approvals" in l for l in tab_labels)
@@ -136,7 +137,7 @@ def test_ui_unauthenticated_view(mock_backend_success):
 
 
 def test_ui_normal_user_restricted_tabs(mock_backend_success):
-    """A normal user (role='user') does NOT see Agents or Audit tabs."""
+    """A normal user (role='user') does NOT see Agents, Audit, or Evaluation tabs."""
     def _mock_user_get(url, *args, **kwargs):
         if "/auth/me" in url:
             resp = MagicMock()
@@ -155,12 +156,13 @@ def test_ui_normal_user_restricted_tabs(mock_backend_success):
         tab_labels = [t.label for t in at.tabs]
         assert not any("Agents" in l for l in tab_labels)
         assert not any("Audit" in l for l in tab_labels)
+        assert not any("Evaluation" in l for l in tab_labels)
         assert any("Chat" in l for l in tab_labels)
         assert any("Documents" in l for l in tab_labels)
 
 
 def test_ui_admin_full_tabs_view(mock_backend_success):
-    """An admin user sees all 7 tabs including Agents and Audit Log."""
+    """An admin user sees all 8 tabs including Agents, Audit Log, and Evaluation."""
     with patch("requests.get", side_effect=mock_backend_success):
         at = AppTest.from_file("ui/app.py", default_timeout=15)
         at.session_state["token"] = "valid-admin-jwt"
@@ -171,11 +173,13 @@ def test_ui_admin_full_tabs_view(mock_backend_success):
         tab_labels = [t.label for t in at.tabs]
         assert any("Agents" in l for l in tab_labels)
         assert any("Audit" in l for l in tab_labels)
+        assert any("Evaluation" in l for l in tab_labels)
         assert any("Chat" in l for l in tab_labels)
         assert any("Documents" in l for l in tab_labels)
         assert any("Traces" in l for l in tab_labels)
         assert any("Approvals" in l for l in tab_labels)
         assert any("Account" in l for l in tab_labels)
+
 
 
 def test_ui_backend_stopped_graceful_display():

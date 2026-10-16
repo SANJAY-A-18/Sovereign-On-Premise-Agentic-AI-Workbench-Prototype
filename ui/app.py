@@ -283,8 +283,10 @@ if is_admin:
         "🔍 Traces",
         "🛡️ Approvals",
         "📋 Audit Log",
+        "📊 Evaluation",
         "👤 Account",
     ]
+
 else:
     tab_titles = [
         "💬 Chat",
@@ -751,9 +753,72 @@ if "📋 Audit Log" in tab_dict:
                 st.error(f"Error loading audit log: {str(e)}")
 
 # ------------------------------------------------------------------------------
+# TAB: EVALUATION (Admin Only)
+# ------------------------------------------------------------------------------
+if "📊 Evaluation" in tab_dict:
+    with tab_dict["📊 Evaluation"]:
+        st.subheader("📊 Evaluation Benchmark Results")
+        st.markdown(
+            "Headless, reproducible benchmarks measuring agent reliability, tool calling validity, "
+            "RAG chunking retrieval hit rates, and resource consumption."
+        )
+
+        from pathlib import Path
+        results_dir = Path(__file__).resolve().parent.parent / "eval" / "results"
+        summary_csv = results_dir / "summary.csv"
+        summary_md = results_dir / "summary.md"
+
+        has_results = results_dir.exists() and (summary_csv.exists() or any(results_dir.glob("*.jsonl")))
+
+        if not has_results:
+            st.info("ℹ️ No evaluation benchmark results found in `eval/results/`. Run `python eval/run_eval.py` to generate benchmarks.")
+        else:
+            col_refresh, _ = st.columns([1, 4])
+            with col_refresh:
+                if st.button("🔄 Refresh Evaluation Data", key="refresh_eval_btn", use_container_width=True):
+                    st.rerun()
+
+            # Render Summary CSV if available
+            if summary_csv.exists():
+                st.markdown("#### 📋 Benchmark Summary Table")
+                try:
+                    import csv
+                    with open(summary_csv, "r", encoding="utf-8") as f:
+                        reader = csv.DictReader(f)
+                        rows = list(reader)
+                    if rows:
+                        st.dataframe(rows, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Error reading summary.csv: {e}")
+
+            # Render Charts
+            st.markdown("#### 📈 Benchmark Visualizations")
+            chart_col1, chart_col2 = st.columns(2)
+
+            chart_e1 = results_dir / "e1_retrieval_hit_vs_chunk_size.png"
+            chart_e2 = results_dir / "e2_reliability_factorial.png"
+            chart_perf = results_dir / "latency_and_memory.png"
+
+            with chart_col1:
+                if chart_e1.exists():
+                    st.image(str(chart_e1), caption="E1: Retrieval Hit@3 Rate vs Chunk Size", use_container_width=True)
+                if chart_perf.exists():
+                    st.image(str(chart_perf), caption="Latency & Peak Ollama RSS Memory", use_container_width=True)
+
+            with chart_col2:
+                if chart_e2.exists():
+                    st.image(str(chart_e2), caption="E2: Reliability Factorial (Validity & Success)", use_container_width=True)
+
+            # Render Markdown summary text if available
+            if summary_md.exists():
+                with st.expander("📄 Full Benchmark Findings & Report (Markdown)", expanded=False):
+                    st.markdown(summary_md.read_text(encoding="utf-8"))
+
+# ------------------------------------------------------------------------------
 # TAB: ACCOUNT / LOGIN
 # ------------------------------------------------------------------------------
 with tab_dict["👤 Account"]:
+
     st.subheader("👤 User Authentication & Registration")
 
     if st.session_state.token and st.session_state.user_info:
