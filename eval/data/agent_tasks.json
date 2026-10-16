@@ -1,0 +1,142 @@
+[
+  {
+    "id": "agent_calc_01",
+    "type": "calculator",
+    "question": "A student owes a laboratory fee of 18500 plus a 12% surcharge. What is the total fee?",
+    "agent": "Document Assistant",
+    "expected_tool": "calculator",
+    "ground_truth_kind": "arithmetic_eval",
+    "expression": "18500 + (18500 * 0.12)"
+  },
+  {
+    "id": "agent_calc_02",
+    "type": "calculator",
+    "question": "Calculate the exact result of (320 * 45) - (1440 / 12).",
+    "agent": "Document Assistant",
+    "expected_tool": "calculator",
+    "ground_truth_kind": "arithmetic_eval",
+    "expression": "(320 * 45) - (1440 / 12)"
+  },
+  {
+    "id": "agent_calc_03",
+    "type": "calculator",
+    "question": "What is 18% of 6500 added to 240?",
+    "agent": "Document Assistant",
+    "expected_tool": "calculator",
+    "ground_truth_kind": "arithmetic_eval",
+    "expression": "(0.18 * 6500) + 240"
+  },
+  {
+    "id": "agent_calc_04",
+    "type": "calculator",
+    "question": "What is 28 raised to the third power divided by 16?",
+    "agent": "Document Assistant",
+    "expected_tool": "calculator",
+    "ground_truth_kind": "arithmetic_eval",
+    "expression": "(28 ** 3) / 16"
+  },
+  {
+    "id": "agent_calc_05",
+    "type": "calculator",
+    "question": "If a tuition fee is 45000 and a 35% merit discount is deducted, what is the net tuition payable?",
+    "agent": "Document Assistant",
+    "expected_tool": "calculator",
+    "ground_truth_kind": "arithmetic_eval",
+    "expression": "45000 * (1 - 0.35)"
+  },
+  {
+    "id": "agent_sql_01",
+    "type": "sql",
+    "question": "What is the marks score of student Meera Nair in the database?",
+    "agent": "Data Analyst",
+    "expected_tool": "read_sql",
+    "ground_truth_kind": "sql_select",
+    "sql_query": "SELECT marks FROM students WHERE name = 'Meera Nair';"
+  },
+  {
+    "id": "agent_sql_02",
+    "type": "sql",
+    "question": "Which student in the database belongs to the Biotechnology department?",
+    "agent": "Data Analyst",
+    "expected_tool": "read_sql",
+    "ground_truth_kind": "sql_select",
+    "sql_query": "SELECT name FROM students WHERE department = 'Biotechnology';"
+  },
+  {
+    "id": "agent_sql_03",
+    "type": "sql",
+    "question": "How many students have a GPA strictly greater than 3.80 in the students table?",
+    "agent": "Data Analyst",
+    "expected_tool": "read_sql",
+    "ground_truth_kind": "sql_select",
+    "sql_query": "SELECT COUNT(*) FROM students WHERE gpa > 3.80;"
+  },
+  {
+    "id": "agent_sql_04",
+    "type": "sql",
+    "question": "What is the minimum marks score among students in the Mechanical department?",
+    "agent": "Data Analyst",
+    "expected_tool": "read_sql",
+    "ground_truth_kind": "sql_select",
+    "sql_query": "SELECT MIN(marks) FROM students WHERE department = 'Mechanical';"
+  },
+  {
+    "id": "agent_sql_05",
+    "type": "sql",
+    "question": "Find the name of the student who has a GPA of 3.95 in the students table.",
+    "agent": "Data Analyst",
+    "expected_tool": "read_sql",
+    "ground_truth_kind": "sql_select",
+    "sql_query": "SELECT name FROM students WHERE gpa = 3.95;"
+  },
+  {
+    "id": "agent_doc_01",
+    "type": "document",
+    "question": "According to the attendance code, what is the condonation surcharge fee for students with attendance between 75.0% and 81.9%?",
+    "agent": "Document Assistant",
+    "expected_tool": "search_documents",
+    "ground_truth_kind": "keywords",
+    "expected_keywords": ["2,450", "2450"],
+    "match": "any"
+  },
+  {
+    "id": "agent_doc_02",
+    "type": "document",
+    "question": "Who leads the Flying Squad Inspection team in the examination regulations?",
+    "agent": "Document Assistant",
+    "expected_tool": "search_documents",
+    "ground_truth_kind": "keywords",
+    "expected_keywords": ["Sunita", "Chhabra"],
+    "match": "any"
+  },
+  {
+    "id": "agent_doc_03",
+    "type": "document",
+    "question": "Under the library charter, what is the infraction penalty fee charged if a student downloads unauthorized peer-to-peer software?",
+    "agent": "Document Assistant",
+    "expected_tool": "search_documents",
+    "ground_truth_kind": "keywords",
+    "expected_keywords": ["3,200", "3200"],
+    "match": "any"
+  },
+  {
+    "id": "agent_doc_04",
+    "type": "document",
+    "question": "What is the double-blind script re-evaluation fee per course under Form RV-11?",
+    "agent": "Document Assistant",
+    "expected_tool": "search_documents",
+    "ground_truth_kind": "keywords",
+    "expected_keywords": ["850"],
+    "match": "all"
+  },
+  {
+    "id": "agent_doc_05",
+    "type": "document",
+    "question": "What is the standard book lending duration in calendar days for undergraduate students?",
+    "agent": "Document Assistant",
+    "expected_tool": "search_documents",
+    "ground_truth_kind": "keywords",
+    "expected_keywords": ["16", "days"],
+    "match": "all"
+  }
+]

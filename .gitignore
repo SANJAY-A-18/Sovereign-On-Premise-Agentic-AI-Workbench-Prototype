@@ -12,9 +12,11 @@ __pycache__/
 .ruff_cache/
 
 # Local data & storage
-data/
-!data/.gitkeep
-!data/demo.db
+/data/
+!/data/.gitkeep
+!/data/demo.db
+eval/.workdir/
+
 
 # Environment variables
 .env

@@ -1,0 +1,242 @@
+[
+  {
+    "id": "rag_q01",
+    "question": "What is the minimum aggregate attendance percentage required under Clause 2.1 to appear for end-semester examinations?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["82", "percent"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q02",
+    "question": "How many percentage points of attendance concession can be granted on medical grounds upon submitting Form MED-401?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["7"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q03",
+    "question": "Who is the Chief Medical Officer to whom medical petitions must be submitted?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["Radhakrishnan"],
+    "match": "any",
+    "answerable": true
+  },
+  {
+    "id": "rag_q04",
+    "question": "Within how many business days of returning to campus must a student submit their medical attendance petition?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["5"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q05",
+    "question": "What is the maximum duty attendance allowance granted for representing the institute in sports or technical symposia?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["10", "percent"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q06",
+    "question": "What is the absolute minimum attendance percentage floor below which no condonation is allowed?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["65", "percent"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q07",
+    "question": "What is the condonation surcharge amount per course for students with attendance between 75.0% and 81.9%?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["2,450", "2450"],
+    "match": "any",
+    "answerable": true
+  },
+  {
+    "id": "rag_q08",
+    "question": "How many hours of supervised library study remediation are mandated for condoned attendance deficits?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["18", "hours"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q09",
+    "question": "What are the exact morning biometric scan window hours at Kiosk-7?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["08:15", "08:35"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q10",
+    "question": "What is the final deadline date for lodging attendance grievance appeals with the Academic Standing Board?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["October 24", "2026"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q11",
+    "question": "Who is the authorized Controller of Examinations under Regulation EXAM-REG-502?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["Deshmukh"],
+    "match": "any",
+    "answerable": true
+  },
+  {
+    "id": "rag_q12",
+    "question": "How many minutes after the commencement bell is candidate entry to the examination hall strictly prohibited?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["20", "minutes"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q13",
+    "question": "What is the minimum passing percentage required specifically in the end-semester written theory paper?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["42", "percent"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q14",
+    "question": "What is the registration fee per theoretical credit for sitting supplementary examinations?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["1,150", "1150"],
+    "match": "any",
+    "answerable": true
+  },
+  {
+    "id": "rag_q15",
+    "question": "What penalty does Clause 8.4 prescribe for unauthorized possession of notes or smart wearables during exams?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["2", "semester"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q16",
+    "question": "What is the application fee for double-blind script re-evaluation using Form RV-11?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["850"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q17",
+    "question": "How many volumes can an undergraduate student borrow concurrently under the library charter?",
+    "source_file": "library_rules.txt",
+    "expected_keywords": ["4"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q18",
+    "question": "What is the standard lending duration in calendar days for undergraduate book loans?",
+    "source_file": "library_rules.txt",
+    "expected_keywords": ["16", "days"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q19",
+    "question": "What is the daily overdue fine rate per volume starting from day 8 onward?",
+    "source_file": "library_rules.txt",
+    "expected_keywords": ["40"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q20",
+    "question": "What is the daily session cap in minutes for users on Cyber Commons computer workstations?",
+    "source_file": "library_rules.txt",
+    "expected_keywords": ["90", "minutes"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q21",
+    "question": "If a student falls ill and needs to miss lectures, which official form must be filed, who reviews it, and how much attendance relief can be granted?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["MED-401", "Radhakrishnan", "7"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q22",
+    "question": "A student arrived late for their exam. At what point is hall admission shut down, and what is the earliest time a student is permitted to hand in their paper and exit?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["20", "45"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q23",
+    "question": "Can undergraduate students take out rare manuscripts from Wing C, and what special badge is needed for on-site inspection?",
+    "source_file": "library_rules.txt",
+    "expected_keywords": ["cannot", "CLRC-SEC-9"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q24",
+    "question": "What happens if a student accidentally loses a borrowed book that is currently out of print?",
+    "source_file": "library_rules.txt",
+    "expected_keywords": ["2.5", "price"],
+    "match": "all",
+    "answerable": true
+  },
+  {
+    "id": "rag_q25",
+    "question": "What is the permissible attendance concession for students participating in blood donation drives on campus?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["do not know", "not mentioned", "no information", "does not contain", "cannot find", "not provided"],
+    "match": "any",
+    "answerable": false
+  },
+  {
+    "id": "rag_q26",
+    "question": "What is the specific stipend deduction penalty for graduate teaching assistants who fail to meet the 82 percent attendance threshold?",
+    "source_file": "attendance_rules.txt",
+    "expected_keywords": ["do not know", "not mentioned", "no information", "does not contain", "cannot find", "not provided"],
+    "match": "any",
+    "answerable": false
+  },
+  {
+    "id": "rag_q27",
+    "question": "What is the passing score percentage required for foreign language elective examinations according to the regulations?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["do not know", "not mentioned", "no information", "does not contain", "cannot find", "not provided"],
+    "match": "any",
+    "answerable": false
+  },
+  {
+    "id": "rag_q28",
+    "question": "What is the deadline date for submitting exam hall disability accommodation requests to Dr. Deshmukh?",
+    "source_file": "exam_regulations.txt",
+    "expected_keywords": ["do not know", "not mentioned", "no information", "does not contain", "cannot find", "not provided"],
+    "match": "any",
+    "answerable": false
+  },
+  {
+    "id": "rag_q29",
+    "question": "How much does the library charge students per page for black-and-white photocopying at the Cyber Commons?",
+    "source_file": "library_rules.txt",
+    "expected_keywords": ["do not know", "not mentioned", "no information", "does not contain", "cannot find", "not provided"],
+    "match": "any",
+    "answerable": false
+  },
+  {
+    "id": "rag_q30",
+    "question": "What is the fee to reserve a private group study room on the third floor of the Central Library?",
+    "source_file": "library_rules.txt",
+    "expected_keywords": ["do not know", "not mentioned", "no information", "does not contain", "cannot find", "not provided"],
+    "match": "any",
+    "answerable": false
+  }
+]
