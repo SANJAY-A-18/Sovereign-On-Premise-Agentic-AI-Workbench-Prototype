@@ -6,7 +6,9 @@ Designed for offline execution on Windows (8 GB RAM budget).
 
 import os
 from pathlib import Path
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
 
 # Disable telemetry globally for offline operation
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
@@ -58,11 +60,22 @@ class Settings(BaseSettings):
     # Agent Loop Parameters
     ENABLE_RETRY: bool = True
     MAX_AGENT_ITERATIONS: int = 5
+    OLLAMA_JSON_MODE: bool = True
+    PROMPT_VARIANT: str = "hardened"  # "hardened" or "baseline"
+
 
     # RAG Chunker Configuration
     RAG_CHUNK_SIZE: int = 500
     RAG_CHUNK_OVERLAP: int = 50
     RAG_TOP_K: int = 3
+
+    @field_validator("OLLAMA_JSON_MODE", mode="before")
+    @classmethod
+    def parse_json_mode(cls, v):
+        if isinstance(v, str):
+            return v.strip().lower() in ("1", "true", "yes", "on")
+        return bool(v)
+
 
     model_config = {
         "env_file": str(BASE_DIR / ".env"),

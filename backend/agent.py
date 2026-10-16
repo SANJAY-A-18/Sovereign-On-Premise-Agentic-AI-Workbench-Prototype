@@ -249,10 +249,13 @@ Schema B (When you have enough information to answer the user):
 5. If a tool returns an error or observation, analyze it and decide your next action.
 6. If the knowledge base or documents do not contain the answer, or if search_documents returns no relevant results, reply with Schema B stating clearly: "I do not know." or "The provided documents do not contain this information."
 7. For ANY math, percentage, or calculation question, if the `calculator` tool is available to you, you MUST invoke the `calculator` tool first using Schema A. Never perform mental math or calculate answers in your head.
-8. For ANY question asking about database records, students, departments, marks, or tables, if the `read_sql` tool is available to you, you MUST invoke `read_sql` first using Schema A. Do NOT write hypothetical SQL queries in the final answer without executing them.
+"""
+    if getattr(settings, "PROMPT_VARIANT", "hardened").lower() != "baseline":
+        prompt += """8. For ANY question asking about database records, students, departments, marks, or tables, if the `read_sql` tool is available to you, you MUST invoke `read_sql` first using Schema A. Do NOT write hypothetical SQL queries in the final answer without executing them.
 9. For ANY factual question about documents, specifications, architecture, system parameters, or deployment, if the `search_documents` tool is available to you, you MUST invoke `search_documents` first using Schema A.
 """
     return prompt
+
 
 
 def record_step(
@@ -446,12 +449,13 @@ class AgentRunner:
 
             # Step 1: Call LLM
             llm_start = time.time()
+            chat_format = "json" if getattr(settings, "OLLAMA_JSON_MODE", True) else None
             try:
                 llm_response = ollama_client.chat(
                     messages=messages,
                     model=agent.model,
                     temperature=agent.temperature,
-                    format="json",
+                    format=chat_format,
                 )
             except OllamaError as oe:
                 llm_latency = (time.time() - llm_start) * 1000
@@ -514,8 +518,9 @@ class AgentRunner:
                         messages=messages,
                         model=agent.model,
                         temperature=0.1,  # Lower temperature for formatting correction
-                        format="json",
+                        format=chat_format,
                     )
+
                 except Exception as oe:
                     retry_response = f"Retry connection error: {oe}"
 
