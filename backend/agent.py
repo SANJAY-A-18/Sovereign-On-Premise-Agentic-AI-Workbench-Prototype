@@ -1,0 +1,674 @@
+"""
+Agent execution loop for Sovereign Workbench.
+Hand-crafted agent loop without LangChain or LlamaIndex.
+Features:
+- Prompt synthesis with allowed tools schemas
+- Forgiving JSON extraction (handles code fences, trailing commas, surrounding text)
+- Configurable retry logic (ENABLE_RETRY flag)
+- Step-by-step latency tracking in SQLite
+- Policy enforcement and human-in-the-loop pause/resume for high-risk actions
+- Source/citation tracking
+"""
+
+import json
+import re
+import time
+from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
+from sqlalchemy.orm import Session
+
+from backend.config import settings
+from backend.db import Run, Step, Agent, User, Approval
+from backend.llm import ollama_client, OllamaError
+from backend.tools import tool_registry
+from backend.policy import evaluate_policy, PolicyDecision
+
+
+def extract_json_from_llm(raw: str) -> Dict[str, Any]:
+    """
+    Forgiving parser to extract a single JSON object from messy LLM text.
+    Handles markdown fences (```json ... ```), surrounding conversational text,
+    newlines, and trailing commas.
+    """
+    if not raw or not raw.strip():
+        raise ValueError("Empty LLM response received.")
+
+    cleaned = raw.strip()
+
+    # If wrapped in code blocks, extract inner content
+    if "```" in cleaned:
+        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, re.IGNORECASE)
+        if match:
+            cleaned = match.group(1).strip()
+
+    # Locate first '{' and last '}'
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace == -1 or last_brace == -1 or last_brace < first_brace:
+        raise ValueError("No JSON object boundaries '{' ... '}' found in LLM response.")
+
+    candidate = cleaned[first_brace : last_brace + 1].strip()
+
+    # 1. Try direct standard JSON parsing
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Fix trailing commas before closing braces/brackets (common small LLM issue)
+    fixed = re.sub(r",\s*([\}\]])", r"\1", candidate)
+    try:
+        parsed = json.loads(fixed)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Handle unescaped newlines within strings
+    fixed_newlines = re.sub(
+        r'("(?:[^"\\]|\\.)*")',
+        lambda m: m.group(1).replace('\n', '\\n').replace('\r', '\\r'),
+        fixed
+    )
+    try:
+        parsed = json.loads(fixed_newlines)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON structure in LLM response: {str(e)}")
+
+    raise ValueError("Extracted JSON root is not an object/dictionary.")
+
+
+def validate_agent_action(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """
+    Validates that the parsed JSON strictly conforms to the agent protocol:
+    Either {"action": "tool", "tool": "<name>", "args": {...}}
+    Or     {"action": "final", "answer": "<text>"}
+    Forgiving for small model variations (e.g. putting tool name in action).
+    """
+    action = data.get("action")
+    if not action:
+        if data.get("tool"):
+            action = "tool"
+        elif data.get("answer") is not None:
+            action = "final"
+        else:
+            raise ValueError("Missing 'action' field in JSON. Must be 'tool' or 'final'.")
+
+    action = str(action).lower().strip()
+    if action == "tool":
+        tool_name = data.get("tool")
+        if not tool_name or not isinstance(tool_name, str):
+            raise ValueError("Tool action must specify a 'tool' string name.")
+        args = data.get("args")
+        if args is None:
+            for k in ["args:", "arguments", "parameters", "params", "input"]:
+                if k in data and isinstance(data[k], dict):
+                    args = data[k]
+                    break
+        if args is None:
+            args = data.get("args", {})
+        if not isinstance(args, dict):
+            # If args passed as string or list, try converting
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {"query": args}
+            else:
+                args = {}
+        if not args:
+            reserved = {"action", "tool", "thought", "args", "args:", "arguments", "parameters"}
+            fallback_args = {k: v for k, v in data.items() if k not in reserved}
+            if fallback_args:
+                args = fallback_args
+
+        # If args is wrapped in a single key like {"args:": {...}} or {"arguments": {...}}
+        if isinstance(args, dict) and len(args) == 1:
+            k = next(iter(args.keys()))
+            if k.rstrip(":") in ("args", "arguments", "parameters", "params") and isinstance(args[k], dict):
+                args = args[k]
+
+        # Normalize common tool parameter names
+        clean_tool = tool_name.strip()
+        if clean_tool == "search_documents" and "query" not in args:
+            for alt in ["question", "text", "search", "expression", "prompt"]:
+                if alt in args:
+                    args["query"] = args.pop(alt)
+                    break
+        elif clean_tool == "calculator" and "expression" not in args:
+            for alt in ["query", "input", "calc", "math", "question"]:
+                if alt in args:
+                    args["expression"] = args.pop(alt)
+                    break
+        elif clean_tool == "read_sql" and "query" not in args:
+            for alt in ["sql", "statement", "command", "expression", "input"]:
+                if alt in args:
+                    args["query"] = args.pop(alt)
+                    break
+        elif clean_tool == "read_file" and "file_path" not in args:
+            for alt in ["path", "filename", "file", "target"]:
+                if alt in args:
+                    args["file_path"] = args[alt]
+                    break
+        return "tool", {"tool": clean_tool, "args": args}
+
+    elif action == "final":
+        answer = data.get("answer")
+        if answer is None:
+            raise ValueError("Final action must include an 'answer' field.")
+        return "final", {"answer": str(answer)}
+
+    else:
+        # Check if small model wrote tool name directly as the action (e.g. {"action": "calculator", ...})
+        from backend.tools import tool_registry
+        if tool_registry.get(action) is not None:
+            tool_name = action
+            args = data.get("args", {})
+            if not isinstance(args, dict):
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {"expression": args} if action == "calculator" else {"query": args}
+                else:
+                    args = {}
+            if not args:
+                reserved = {"action", "tool", "thought", "args"}
+                fallback_args = {k: v for k, v in data.items() if k not in reserved}
+                if fallback_args:
+                    args = fallback_args
+            clean_tool = tool_name.strip()
+            if clean_tool == "search_documents" and "query" not in args:
+                for alt in ["question", "text", "search", "expression", "prompt"]:
+                    if alt in args:
+                        args["query"] = args.pop(alt)
+                        break
+            elif clean_tool == "calculator" and "expression" not in args:
+                for alt in ["query", "input", "calc", "math", "question"]:
+                    if alt in args:
+                        args["expression"] = args.pop(alt)
+                        break
+            elif clean_tool == "read_sql" and "query" not in args:
+                for alt in ["sql", "statement", "command", "expression", "input"]:
+                    if alt in args:
+                        args["query"] = args.pop(alt)
+                        break
+            elif clean_tool == "read_file" and "file_path" not in args:
+                for alt in ["path", "filename", "file", "target"]:
+                    if alt in args:
+                        args["file_path"] = args.pop(alt)
+                        break
+            return "tool", {"tool": clean_tool, "args": args}
+
+        raise ValueError(f"Unrecognized action '{action}'. Must be 'tool' or 'final'.")
+
+
+def build_system_prompt(agent: Agent, allowed_tools_info: List[Dict[str, Any]]) -> str:
+    """Builds the comprehensive system prompt instructing the model on available tools and JSON schema."""
+    tools_formatted = []
+    for t in allowed_tools_info:
+        tools_formatted.append(
+            f"- Tool: `{t['name']}` (Risk: {t['risk_level']})\n"
+            f"  Description: {t['description']}\n"
+            f"  Parameters Schema: {json.dumps(t['parameters'])}"
+        )
+
+    tools_section = "\n\n".join(tools_formatted) if tools_formatted else "None."
+
+    prompt = f"""{agent.system_prompt}
+
+You are an autonomous offline agent running on an on-premise sovereign system.
+You can call tools to find information or compute answers.
+
+### AVAILABLE TOOLS (Allowed For You Only):
+{tools_section}
+
+### STRICT OPERATING RULES:
+1. You must reply ONLY with a single valid JSON object.
+2. Do not write introductory words, explanations, markdown outside the JSON, or conversational filler.
+3. Your reply MUST adhere to one of these two exact schemas:
+
+Schema A (To invoke a tool):
+{{
+  "action": "tool",
+  "tool": "<tool_name>",
+  "args": {{ ... }}
+}}
+
+Schema B (When you have enough information to answer the user):
+{{
+  "action": "final",
+  "answer": "<complete answer, with source citations if retrieved from documents>"
+}}
+
+4. Always cite sources (filename and chunk number) if your answer is based on search_documents.
+5. If a tool returns an error or observation, analyze it and decide your next action.
+6. If the knowledge base or documents do not contain the answer, or if search_documents returns no relevant results, reply with Schema B stating clearly: "I do not know." or "The provided documents do not contain this information."
+7. For ANY math, percentage, or calculation question, if the `calculator` tool is available to you, you MUST invoke the `calculator` tool first using Schema A. Never perform mental math or calculate answers in your head.
+8. For ANY question asking about database records, students, departments, marks, or tables, if the `read_sql` tool is available to you, you MUST invoke `read_sql` first using Schema A. Do NOT write hypothetical SQL queries in the final answer without executing them.
+9. For ANY factual question about documents, specifications, architecture, system parameters, or deployment, if the `search_documents` tool is available to you, you MUST invoke `search_documents` first using Schema A.
+"""
+    return prompt
+
+
+def record_step(
+    db: Session,
+    run_id: int,
+    step_number: int,
+    step_type: str,
+    input_data: Any,
+    output_data: Any,
+    latency_ms: float = 0.0,
+) -> Step:
+    """Helper to persist a step trace in the database with PII masked."""
+    from backend.policy import mask_pii
+
+    in_str = input_data if isinstance(input_data, str) else json.dumps(input_data)
+    out_str = output_data if isinstance(output_data, str) else json.dumps(output_data)
+
+    safe_in = mask_pii(in_str)
+    safe_out = mask_pii(out_str)
+
+    step = Step(
+        run_id=run_id,
+        step_number=step_number,
+        step_type=step_type,
+        input_data=safe_in,
+        output_data=safe_out,
+        latency_ms=round(latency_ms, 2),
+        created_at=datetime.utcnow(),
+    )
+    db.add(step)
+    db.commit()
+    db.refresh(step)
+    return step
+
+
+class AgentRunner:
+    """Executes the agent loop with memory, policy, and trace logging."""
+
+    @staticmethod
+    def run_agent(
+        run_id: int,
+        db: Session,
+        max_iterations: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Runs or resumes an agent workflow.
+        Guarantees that run.status never stays in 'running' if an unexpected exception occurs.
+        """
+        run = db.query(Run).filter(Run.id == run_id).first()
+        if not run:
+            raise ValueError(f"Run {run_id} not found.")
+
+        start_time = time.time()
+        try:
+            return AgentRunner._execute_agent_loop(
+                run=run,
+                db=db,
+                start_time=start_time,
+                max_iterations=max_iterations,
+            )
+        except Exception as exc:
+            run.status = "failed"
+            run.final_answer = f"Agent execution aborted due to unexpected error: {str(exc)}"
+            run.total_latency_ms = (time.time() - start_time) * 1000
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+            return {
+                "status": "failed",
+                "answer": run.final_answer,
+                "run_id": run.id,
+            }
+
+    @staticmethod
+    def _execute_agent_loop(
+        run: Run,
+        db: Session,
+        start_time: float,
+        max_iterations: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        run_id = run.id
+        agent = db.query(Agent).filter(Agent.id == run.agent_id).first()
+        user = db.query(User).filter(User.id == run.user_id).first()
+        max_iters = max_iterations or settings.MAX_AGENT_ITERATIONS
+
+        # Fetch allowed tool definitions
+        allowed_tool_names = agent.get_allowed_tools_list()
+        allowed_tools_info = [
+            tool_registry.get(name).to_definition().model_dump()
+            for name in allowed_tool_names
+            if tool_registry.get(name) is not None
+        ]
+
+        system_instruction = build_system_prompt(agent, allowed_tools_info)
+
+        # Build message history from existing steps (to support resuming after approval)
+        existing_steps = (
+            db.query(Step)
+            .filter(Step.run_id == run_id)
+            .order_by(Step.step_number)
+            .all()
+        )
+
+        step_counter = len(existing_steps)
+
+        # Reconstruct conversation context
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": f"User Question: {run.question}"},
+        ]
+
+        sources_used = []
+
+        # Replay completed steps into messages
+        for st in existing_steps:
+            if st.step_type == "llm":
+                messages.append({"role": "assistant", "content": st.output_data})
+            elif st.step_type == "tool":
+                messages.append(
+                    {"role": "user", "content": f"Tool Observation ({st.input_data}):\n{st.output_data}"}
+                )
+                if "Source:" in st.output_data or "search_documents" in st.input_data:
+                    sources_used.append(st.output_data)
+
+        # Check if there was an approval recently decided that needs execution
+        pending_approval = (
+            db.query(Approval)
+            .filter(Approval.run_id == run_id, Approval.status.in_(["approved", "denied"]))
+            .order_by(Approval.id.desc())
+            .first()
+        )
+
+        # If run was paused and approval was just granted, execute the approved tool
+        if run.status == "paused_for_approval" and pending_approval:
+            if pending_approval.status == "approved":
+                step_counter += 1
+                t_start = time.time()
+                tool_name = pending_approval.tool_name
+                tool_args = json.loads(pending_approval.tool_args)
+                tool = tool_registry.get(tool_name)
+
+                try:
+                    tool_output = str(tool.func(**tool_args))
+                except Exception as e:
+                    tool_output = f"Tool execution failed: {str(e)}"
+
+                t_lat = (time.time() - t_start) * 1000
+                record_step(
+                    db=db,
+                    run_id=run_id,
+                    step_number=step_counter,
+                    step_type="tool",
+                    input_data=f"{tool_name}({json.dumps(tool_args)})",
+                    output_data=tool_output,
+                    latency_ms=t_lat,
+                )
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool Observation ({tool_name}):\n{tool_output}"
+                })
+                run.status = "running"
+                db.commit()
+
+            elif pending_approval.status == "denied":
+                step_counter += 1
+                record_step(
+                    db=db,
+                    run_id=run_id,
+                    step_number=step_counter,
+                    step_type="policy",
+                    input_data=f"Denied approval for {pending_approval.tool_name}",
+                    output_data="Human supervisor denied this high-risk action.",
+                    latency_ms=0.0,
+                )
+                messages.append({
+                    "role": "user",
+                    "content": f"Observation: High-risk action '{pending_approval.tool_name}' was DENIED by the supervisor. Proceed without it."
+                })
+                run.status = "running"
+                db.commit()
+
+        # Update run status to running
+        run.status = "running"
+        db.commit()
+
+        iteration = 0
+        while iteration < max_iters:
+            iteration += 1
+            step_counter += 1
+
+            # Step 1: Call LLM
+            llm_start = time.time()
+            try:
+                llm_response = ollama_client.chat(
+                    messages=messages,
+                    model=agent.model,
+                    temperature=agent.temperature,
+                    format="json",
+                )
+            except OllamaError as oe:
+                llm_latency = (time.time() - llm_start) * 1000
+                record_step(
+                    db=db,
+                    run_id=run_id,
+                    step_number=step_counter,
+                    step_type="llm",
+                    input_data="[Ollama Chat Call]",
+                    output_data=f"LLM Error: {str(oe)}",
+                    latency_ms=llm_latency,
+                )
+                run.status = "failed"
+                run.final_answer = f"Error during model communication: {str(oe)}"
+                run.total_latency_ms = (time.time() - start_time) * 1000
+                db.commit()
+                return {
+                    "status": "failed",
+                    "answer": run.final_answer,
+                    "run_id": run.id,
+                }
+
+            llm_latency = (time.time() - llm_start) * 1000
+            record_step(
+                db=db,
+                run_id=run_id,
+                step_number=step_counter,
+                step_type="llm",
+                input_data=f"Prompt context ({len(messages)} messages)",
+                output_data=llm_response,
+                latency_ms=llm_latency,
+            )
+            messages.append({"role": "assistant", "content": llm_response})
+
+            # Step 2: Parse and validate JSON (with retries if enabled)
+            action_type = None
+            action_data = None
+            retry_count = 0
+            max_retries = 2 if settings.ENABLE_RETRY else 0
+
+            parse_error = None
+            try:
+                raw_json = extract_json_from_llm(llm_response)
+                action_type, action_data = validate_agent_action(raw_json)
+            except Exception as e:
+                parse_error = str(e)
+
+            while parse_error and retry_count < max_retries:
+                retry_count += 1
+                step_counter += 1
+                retry_start = time.time()
+
+                corrective_prompt = (
+                    f"Error: {parse_error}. Reply with valid JSON only conforming to Schema A or Schema B."
+                )
+                messages.append({"role": "user", "content": corrective_prompt})
+
+                try:
+                    retry_response = ollama_client.chat(
+                        messages=messages,
+                        model=agent.model,
+                        temperature=0.1,  # Lower temperature for formatting correction
+                        format="json",
+                    )
+                except Exception as oe:
+                    retry_response = f"Retry connection error: {oe}"
+
+                retry_lat = (time.time() - retry_start) * 1000
+                record_step(
+                    db=db,
+                    run_id=run_id,
+                    step_number=step_counter,
+                    step_type="retry",
+                    input_data=f"Retry {retry_count}: {corrective_prompt}",
+                    output_data=retry_response,
+                    latency_ms=retry_lat,
+                )
+                messages.append({"role": "assistant", "content": retry_response})
+
+                try:
+                    raw_json = extract_json_from_llm(retry_response)
+                    action_type, action_data = validate_agent_action(raw_json)
+                    parse_error = None  # Successfully resolved
+                except Exception as e:
+                    parse_error = str(e)
+
+            if parse_error:
+                # If still invalid after retries, fail run
+                run.status = "failed"
+                run.final_answer = (
+                    f"Model output format failure after retries: {parse_error}. "
+                    f"Raw response: {llm_response[:300]}"
+                )
+                run.total_latency_ms = (time.time() - start_time) * 1000
+                db.commit()
+                return {
+                    "status": "failed",
+                    "answer": run.final_answer,
+                    "run_id": run.id,
+                }
+
+            # Step 3: Handle Final Action
+            if action_type == "final":
+                final_answer = action_data["answer"]
+                run.status = "completed"
+                run.final_answer = final_answer
+                run.total_latency_ms = (time.time() - start_time) * 1000
+                db.commit()
+                return {
+                    "status": "completed",
+                    "answer": final_answer,
+                    "sources": sources_used,
+                    "run_id": run.id,
+                }
+
+            # Step 4: Handle Tool Action
+            elif action_type == "tool":
+                tool_name = action_data["tool"]
+                tool_args = action_data["args"]
+
+                # Guard against repeated identical tool calls causing loop thrashing
+                current_call_signature = (tool_name, json.dumps(tool_args, sort_keys=True))
+                if getattr(run, "_last_tool_call", None) == current_call_signature:
+                    messages.append({
+                        "role": "user",
+                        "content": f"Loop Warning: Tool '{tool_name}' was just executed with identical arguments. Do not repeat the same call. Formulate your final answer using the observation already gathered.",
+                    })
+                    continue
+                run._last_tool_call = current_call_signature
+
+                step_counter += 1
+                # Evaluate Policy Layer
+                policy_start = time.time()
+                decision, reason, approval_id = evaluate_policy(
+                    tool_name=tool_name,
+                    agent_allowed_tools=allowed_tool_names,
+                    user_role=user.role,
+                    username=user.username,
+                    run_id=run.id,
+                    tool_args=tool_args,
+                    db=db,
+                )
+                policy_lat = (time.time() - policy_start) * 1000
+
+                record_step(
+                    db=db,
+                    run_id=run_id,
+                    step_number=step_counter,
+                    step_type="policy",
+                    input_data=f"Policy check: {tool_name}",
+                    output_data=f"Decision: {decision}. Reason: {reason}",
+                    latency_ms=policy_lat,
+                )
+
+                if decision == PolicyDecision.REQUIRES_APPROVAL:
+                    run.status = "paused_for_approval"
+                    run.total_latency_ms = (time.time() - start_time) * 1000
+                    db.commit()
+                    return {
+                        "status": "paused_for_approval",
+                        "approval_id": approval_id,
+                        "tool_name": tool_name,
+                        "tool_args": tool_args,
+                        "message": f"Execution paused. Action '{tool_name}' requires human approval.",
+                        "run_id": run.id,
+                    }
+
+                elif decision == PolicyDecision.DENIED:
+                    # Inform agent of policy denial so it can adapt or answer
+                    messages.append({
+                        "role": "user",
+                        "content": f"Policy Enforcement Notice: Tool '{tool_name}' execution was denied ({reason}). Choose a permitted tool or finalize.",
+                    })
+                    continue
+
+                elif decision == PolicyDecision.ALLOWED:
+                    # Execute the tool
+                    step_counter += 1
+                    t_exec_start = time.time()
+                    tool_obj = tool_registry.get(tool_name)
+                    try:
+                        tool_result = str(tool_obj.func(**tool_args))
+                    except Exception as e:
+                        tool_result = f"Tool Execution Error: {str(e)}"
+
+                    t_exec_lat = (time.time() - t_exec_start) * 1000
+                    record_step(
+                        db=db,
+                        run_id=run_id,
+                        step_number=step_counter,
+                        step_type="tool",
+                        input_data=f"{tool_name}({json.dumps(tool_args)})",
+                        output_data=tool_result,
+                        latency_ms=t_exec_lat,
+                    )
+
+                    if "Source:" in tool_result or tool_name == "search_documents":
+                        sources_used.append(tool_result)
+
+                    messages.append({
+                        "role": "user",
+                        "content": f"Tool Observation ({tool_name}):\n{tool_result}",
+                    })
+                    continue
+
+        # If max iterations exhausted
+        run.status = "completed"
+        fallback_msg = (
+            "Maximum reasoning iterations reached. Partial context gathered. "
+            "Please review the trace steps for detailed observations."
+        )
+        run.final_answer = fallback_msg
+        run.total_latency_ms = (time.time() - start_time) * 1000
+        db.commit()
+        return {
+            "status": "completed",
+            "answer": fallback_msg,
+            "sources": sources_used,
+            "run_id": run.id,
+        }

@@ -1,0 +1,122 @@
+[
+  {
+    "id": "rag_doc_fact_1",
+    "category": "document_facts",
+    "prompt": "What year was Project Orion created and what was its purpose according to the documents?",
+    "expected_tool": "search_documents",
+    "expected_keywords": ["2024", "Orion", "on-premise", "sovereign"],
+    "requires_citation": true
+  },
+  {
+    "id": "rag_doc_fact_2",
+    "category": "document_facts",
+    "prompt": "How many replica nodes and what RAM specification is required for deployment?",
+    "expected_tool": "search_documents",
+    "expected_keywords": ["3", "replica", "8 GB", "RAM"],
+    "requires_citation": true
+  },
+  {
+    "id": "rag_doc_fact_3",
+    "category": "document_facts",
+    "prompt": "What is the primary encryption standard used for stored credentials in the architecture document?",
+    "expected_tool": "search_documents",
+    "expected_keywords": ["AES-256", "bcrypt"],
+    "requires_citation": true
+  },
+  {
+    "id": "not_in_docs_1",
+    "category": "not_in_documents",
+    "prompt": "What was the quarterly revenue of Acme Corp in 2021?",
+    "expected_tool": "search_documents",
+    "expected_keywords": ["do not know", "not found", "does not contain", "do not contain", "no information", "did not provide", "did not find"],
+    "requires_citation": false
+  },
+  {
+    "id": "not_in_docs_2",
+    "category": "not_in_documents",
+    "prompt": "What is the average flight speed of an African swallow?",
+    "expected_tool": "search_documents",
+    "expected_keywords": ["do not know", "not found", "does not contain", "do not contain", "no information", "did not provide", "did not find"],
+    "requires_citation": false
+  },
+  {
+    "id": "not_in_docs_3",
+    "category": "not_in_documents",
+    "prompt": "Who won the ICC Cricket World Cup in 2011?",
+    "expected_tool": "search_documents",
+    "expected_keywords": ["do not know", "not found", "does not contain", "do not contain", "no information", "did not provide", "did not find"],
+    "requires_citation": false
+  },
+  {
+    "id": "math_1",
+    "category": "math",
+    "prompt": "What is 458 multiplied by 37?",
+    "expected_tool": "calculator",
+    "expected_keywords": ["16946"],
+    "requires_citation": false
+  },
+  {
+    "id": "math_2",
+    "category": "math",
+    "prompt": "Calculate 15% tax on an amount of 4500.",
+    "expected_tool": "calculator",
+    "expected_keywords": ["675"],
+    "requires_citation": false
+  },
+  {
+    "id": "math_3",
+    "category": "math",
+    "prompt": "Compute (125 * 8) - (450 / 9).",
+    "expected_tool": "calculator",
+    "expected_keywords": ["950"],
+    "requires_citation": false
+  },
+  {
+    "id": "sql_1",
+    "category": "sql",
+    "prompt": "How many total students are in the database?",
+    "expected_tool": "read_sql",
+    "expected_keywords": ["10"],
+    "requires_citation": false
+  },
+  {
+    "id": "sql_2",
+    "category": "sql",
+    "prompt": "Which student has the highest marks in the students table?",
+    "expected_tool": "read_sql",
+    "expected_keywords": ["marks"],
+    "requires_citation": false
+  },
+  {
+    "id": "sql_3",
+    "category": "sql",
+    "prompt": "List all distinct departments in the students table.",
+    "expected_tool": "read_sql",
+    "expected_keywords": ["Computer Science"],
+    "requires_citation": false
+  },
+  {
+    "id": "edge_conversational_math",
+    "category": "edge_phrasing",
+    "prompt": "Hey, can you quickly find what's 999 plus 888?",
+    "expected_tool": "calculator",
+    "expected_keywords": ["1887"],
+    "requires_citation": false
+  },
+  {
+    "id": "edge_conversational_sql",
+    "category": "edge_phrasing",
+    "prompt": "Please pull up the students whose graduation year is 2025.",
+    "expected_tool": "read_sql",
+    "expected_keywords": ["2025"],
+    "requires_citation": false
+  },
+  {
+    "id": "multi_step_lookup_math",
+    "category": "multi_step",
+    "prompt": "Find the marks of Alice in the database, and then calculate what her marks would be after adding a 10% bonus.",
+    "expected_tool": "read_sql",
+    "expected_keywords": ["Alice"],
+    "requires_citation": false
+  }
+]

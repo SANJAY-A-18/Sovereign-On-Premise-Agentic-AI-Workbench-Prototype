@@ -1,0 +1,238 @@
+[
+  {
+    "id": "rag_doc_fact_1",
+    "category": "document_facts",
+    "prompt": "What year was Project Orion created and what was its purpose according to the documents?",
+    "expected_tool": "search_documents",
+    "tool_chosen": "search_documents",
+    "all_tools": [
+      "search_documents"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 21970.7,
+    "answer_preview": "According to the documents, Project Orion was created in 2024 with the purpose of designing sovereign on-premise AI syst"
+  },
+  {
+    "id": "rag_doc_fact_2",
+    "category": "document_facts",
+    "prompt": "How many replica nodes and what RAM specification is required for deployment?",
+    "expected_tool": "search_documents",
+    "tool_chosen": "search_documents",
+    "all_tools": [
+      "search_documents"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 22746.7,
+    "answer_preview": "Based on the information found in the documents, for the deployment of the sovereign on-premise AI system, exactly 3 rep"
+  },
+  {
+    "id": "rag_doc_fact_3",
+    "category": "document_facts",
+    "prompt": "What is the primary encryption standard used for stored credentials in the architecture document?",
+    "expected_tool": "search_documents",
+    "tool_chosen": "search_documents",
+    "all_tools": [
+      "search_documents"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 19768.1,
+    "answer_preview": "The primary encryption standard used for stored credentials in the architecture document is AES-256."
+  },
+  {
+    "id": "not_in_docs_1",
+    "category": "not_in_documents",
+    "prompt": "What was the quarterly revenue of Acme Corp in 2021?",
+    "expected_tool": "search_documents",
+    "tool_chosen": "none",
+    "all_tools": [],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 4693.0,
+    "answer_preview": "The documents do not contain this information."
+  },
+  {
+    "id": "not_in_docs_2",
+    "category": "not_in_documents",
+    "prompt": "What is the average flight speed of an African swallow?",
+    "expected_tool": "search_documents",
+    "tool_chosen": "search_documents",
+    "all_tools": [
+      "search_documents"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 26342.3,
+    "answer_preview": "The search documents did not find any relevant information about the average flight speed of an African swallow. Please "
+  },
+  {
+    "id": "not_in_docs_3",
+    "category": "not_in_documents",
+    "prompt": "Who won the ICC Cricket World Cup in 2011?",
+    "expected_tool": "search_documents",
+    "tool_chosen": "search_documents",
+    "all_tools": [
+      "search_documents"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 25057.7,
+    "answer_preview": "The documents do not contain the information about who won the ICC Cricket World Cup in 2011."
+  },
+  {
+    "id": "math_1",
+    "category": "math",
+    "prompt": "What is 458 multiplied by 37?",
+    "expected_tool": "calculator",
+    "tool_chosen": "calculator",
+    "all_tools": [
+      "calculator"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 11609.4,
+    "answer_preview": "458 multiplied by 37 equals 16946."
+  },
+  {
+    "id": "math_2",
+    "category": "math",
+    "prompt": "Calculate 15% tax on an amount of 4500.",
+    "expected_tool": "calculator",
+    "tool_chosen": "calculator",
+    "all_tools": [
+      "calculator"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 13756.1,
+    "answer_preview": "The tax on an amount of 4500 at 15% is 675.0."
+  },
+  {
+    "id": "math_3",
+    "category": "math",
+    "prompt": "Compute (125 * 8) - (450 / 9).",
+    "expected_tool": "calculator",
+    "tool_chosen": "calculator",
+    "all_tools": [
+      "calculator"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 12450.6,
+    "answer_preview": "950.0"
+  },
+  {
+    "id": "sql_1",
+    "category": "sql",
+    "prompt": "How many total students are in the database?",
+    "expected_tool": "read_sql",
+    "tool_chosen": "read_sql",
+    "all_tools": [
+      "read_sql"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 12112.1,
+    "answer_preview": "There are a total of 10 students in the database."
+  },
+  {
+    "id": "sql_2",
+    "category": "sql",
+    "prompt": "Which student has the highest marks in the students table?",
+    "expected_tool": "read_sql",
+    "tool_chosen": "read_sql",
+    "all_tools": [
+      "read_sql"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 15533.6,
+    "answer_preview": "The student with the highest marks is Pooja Hegde with 96 marks."
+  },
+  {
+    "id": "sql_3",
+    "category": "sql",
+    "prompt": "List all distinct departments in the students table.",
+    "expected_tool": "read_sql",
+    "tool_chosen": "none",
+    "all_tools": [],
+    "correct": false,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 2057679.7,
+    "answer_preview": "Error during model communication: Ollama call timed out after 120 seconds. The 8 GB machine may be under heavy load."
+  },
+  {
+    "id": "edge_conversational_math",
+    "category": "edge_phrasing",
+    "prompt": "Hey, can you quickly find what's 999 plus 888?",
+    "expected_tool": "calculator",
+    "tool_chosen": "calculator",
+    "all_tools": [
+      "calculator"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 27345.6,
+    "answer_preview": "999 plus 888 equals 1887."
+  },
+  {
+    "id": "edge_conversational_sql",
+    "category": "edge_phrasing",
+    "prompt": "Please pull up the students whose graduation year is 2025.",
+    "expected_tool": "read_sql",
+    "tool_chosen": "read_sql",
+    "all_tools": [
+      "read_sql"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 20996.2,
+    "answer_preview": "The students who are graduating in 2025 are: - Aarav Sharma with marks 88 and GPA 3.85 - Rohan Iyer with marks 75 and GP"
+  },
+  {
+    "id": "multi_step_lookup_math",
+    "category": "multi_step",
+    "prompt": "Find the marks of Alice in the database, and then calculate what her marks would be after adding a 10% bonus.",
+    "expected_tool": "read_sql",
+    "tool_chosen": "read_sql",
+    "all_tools": [
+      "read_sql"
+    ],
+    "correct": true,
+    "json_first_try": true,
+    "retries": 0,
+    "citation_correct": true,
+    "latency_ms": 13260.9,
+    "answer_preview": "The documents do not contain the marks of Alice. Therefore, I cannot calculate her marks after adding a 10% bonus."
+  }
+]

@@ -1,0 +1,32 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.pytest_cache/
+.ruff_cache/
+
+# Local data & storage
+data/
+!data/.gitkeep
+!data/demo.db
+
+# Environment variables
+.env
+
+# Review and backup folders
+_to_review/
+backups/
+
+# Testing & coverage
+.coverage
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
