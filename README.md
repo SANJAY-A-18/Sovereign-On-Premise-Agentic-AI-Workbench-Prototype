@@ -141,7 +141,37 @@ Executes the 15 regression prompts across document facts, unanswerable queries, 
 python -u scripts/run_regression_suite.py docs/regression_results.json
 ```
 
+### How to Run Evaluation Experiments (Phase 6)
+The evaluation module provides a headless, reproducible benchmark measuring agent behavior, tool call validity, RAG retrieval hit rates, and RAM usage on an 8 GB laptop:
+
+```powershell
+# 1. Install evaluation dependencies (matplotlib)
+pip install -r requirements-eval.txt
+
+# 2. Run unit tests for metrics (zero Ollama required)
+pytest tests/test_eval_metrics.py
+
+# 3. Run a quick 3-item smoke test
+python eval/run_eval.py --smoke-test --out eval/results/smoke_test.jsonl
+
+# 4. Run Experiment 1: RAG Chunk Size (300, 500, 800 chars, no LLM)
+python eval/run_eval.py --chunk-size 300 --suite rag --retrieval-only --out eval/results/e1_chunk_300.jsonl
+python eval/run_eval.py --chunk-size 500 --suite rag --retrieval-only --out eval/results/e1_chunk_500.jsonl
+python eval/run_eval.py --chunk-size 800 --suite rag --retrieval-only --out eval/results/e1_chunk_800.jsonl
+
+# 5. Run Full Benchmark Suite (qwen2.5:3b, JSON mode, retry, hardened prompts)
+python eval/run_eval.py --suite all --repeats 1 --json-mode on --retry on --prompt-variant hardened --out eval/results/e2_json_on_retry_on.jsonl
+
+# 6. Generate summary tables, Wilson CIs, McNemar tests, and charts
+python eval/report.py
+
+# 7. View results in the Streamlit UI (Admin Only -> '📊 Evaluation' tab)
+streamlit run ui/app.py
+```
+Detailed methodology, dataset descriptions, the freeze rule, and threats to validity are documented in [`docs/EVALUATION.md`](docs/EVALUATION.md).
+
 ---
+
 
 ## Memory & Performance Metrics (Measured on 8 GB Laptop)
 
