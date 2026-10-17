@@ -77,6 +77,56 @@ def compute_retrieval_hit(
     return False
 
 
+def compute_chunk_level_retrieval(
+    retrieved_chunks: List[Dict[str, Any]],
+    expected_keywords: List[str],
+    match_mode: str = "all",
+    top_k: int = 3,
+) -> Dict[str, Any]:
+    """
+    Computes chunk-level retrieval metrics:
+    - hit@1: top-1 retrieved chunk contains the expected answer keywords.
+    - hit@3: at least one chunk in top-3 contains the expected answer keywords.
+    - reciprocal_rank: 1.0 (rank 1), 0.5 (rank 2), 0.333... (rank 3), or 0.0.
+    - matching_rank: 1-indexed rank of first matching chunk (1..top_k), or None.
+    """
+    if not expected_keywords:
+        return {
+            "hit@1": False,
+            "hit@3": False,
+            "reciprocal_rank": 0.0,
+            "matching_rank": None,
+        }
+
+    kws = [k.lower().strip() for k in expected_keywords if k.strip()]
+    matching_rank = None
+
+    for rank, chunk in enumerate(retrieved_chunks[:top_k], start=1):
+        content = (chunk.get("content") or chunk.get("text") or "").lower()
+        if not content:
+            continue
+
+        if match_mode == "any":
+            matched = any(kw in content for kw in kws)
+        else:  # "all"
+            matched = all(kw in content for kw in kws)
+
+        if matched:
+            matching_rank = rank
+            break
+
+    hit_1 = (matching_rank == 1)
+    hit_3 = (matching_rank is not None and matching_rank <= 3)
+    rr = (1.0 / matching_rank) if matching_rank is not None else 0.0
+
+    return {
+        "hit@1": hit_1,
+        "hit@3": hit_3,
+        "reciprocal_rank": rr,
+        "matching_rank": matching_rank,
+    }
+
+
 def compute_citation_valid(
     answer: str,
     sources: List[str],

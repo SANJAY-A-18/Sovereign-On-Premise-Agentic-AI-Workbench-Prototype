@@ -1,0 +1,15 @@
+SCHOLARLY INTEGRITY AND RESEARCH CONDUCT CODE (ETH-RES-77)
+Section 1. Ethical Governance and Institutional Review Board (IRB)
+1.1 All scholarly research investigations involving human participants, patient clinical datasets, biological specimens, or animal models must obtain prior clearance from the Institutional Ethics Committee (IEC).
+1.2 Protocols must be submitted to IRB Member Secretary Dr. Ananya Mukherjee at least 30 days prior to participant recruitment, accompanied by certified informed consent documentation.
+1.3 Conducting biomedical or behavioral research without formal IRB approval leads to immediate thesis invalidation and cancellation of doctoral fellowships.
+
+Section 2. Authorship Standards and Plagiarism Thresholds
+2.1 Co-authorship on scholarly manuscripts and conference proceedings must be restricted to individuals who have made substantial, demonstrable intellectual contributions to experimental design, data acquisition, or analysis.
+2.2 The University enforces an uncompromised anti-plagiarism standard. All research dissertations and journal submissions must undergo automated similarity screening utilizing Turnitin.
+2.3 The maximum acceptable text similarity index is set at 10%, strictly excluding cited references, standard mathematical formulas, and generic methodological nomenclature.
+2.4 Similarity indexes exceeding 25% are classified as Level-3 Academic Malpractice, resulting in immediate expulsion of the research scholar and a 3-year research supervision debarment for the faculty guide.
+
+Section 3. Data Archiving, Intellectual Property, and Conflict of Interest
+3.1 Original raw experimental datasets, spectroscopic logs, and computational source scripts must be deposited in the secure University Research Data Repository (ApexData-Archive) for a minimum retention window of 7 years.
+3.2 Any potential commercial patent, invention, or revenue-generating software utility developed using university laboratory resources is governed by the 60:40 Institutional Intellectual Property Sharing Scheme.

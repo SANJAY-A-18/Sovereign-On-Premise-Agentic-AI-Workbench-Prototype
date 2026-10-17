@@ -1,0 +1,14 @@
+INSTITUTIONAL INFORMATION TECHNOLOGY POLICY (DIRECTIVE IT-SEC-108)
+Section 1. Network Authentication and Bandwidth Allocations
+1.1 The Information Technology Services Division (ITSD) provides secure wireless local area network connectivity (SSID: 'CampusNet-Secure') across all academic, administrative, and residential facilities.
+1.2 Every student is provisioned an individual network credential linked to their institutional identity number, granting a monthly fair-usage download quota of 120 Gigabytes at symmetric 100 Mbps throughput.
+1.3 Bandwidth consumption exceeding the allocated quota results in automatic throttling to 2 Mbps until the first calendar day of the subsequent billing cycle unless an emergency quota extension is authorized via the ITSD Helpdesk.
+
+Section 2. Hardware Registration and Security Compliance
+2.1 Personal laptops, tablets, and mobile devices connecting to the campus intranet must register their network interface Media Access Control (MAC) address via the ITSD Self-Service Portal.
+2.2 Devices running end-of-life operating systems or exhibiting unpatched critical vulnerabilities will be quarantined dynamically into an isolated VLAN until remediated.
+2.3 The deployment of rogue wireless access points, unauthorized DHCP servers, packet sniffing utilities, or unlicensed network bridging devices in residential halls is strictly forbidden.
+
+Section 3. Cybersecurity Violations and Sanctions
+3.1 Engaging in network penetration testing, distributed denial of service (DDoS) simulations, password cracking, or automated credential stuffing without explicit written authorization from Chief Information Officer Dr. Tarun Sengupta constitutes a Class-A disciplinary violation.
+3.2 Violators are subject to immediate termination of university network privileges, forfeiture of computer laboratory access for two consecutive semesters, and referral to the Cyber Crime Wing of the State Police Department.

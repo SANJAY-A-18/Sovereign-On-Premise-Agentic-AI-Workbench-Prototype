@@ -13,6 +13,7 @@ from eval.metrics import (
     compute_citation_valid,
     is_abstention,
     compute_task_success,
+    compute_chunk_level_retrieval,
     compute_wilson_ci,
     compute_mcnemar_exact,
 )
@@ -218,3 +219,40 @@ def test_mcnemar_exact():
     assert b == 0 and c == 10
     # 2 * (0.5^10) = 2 / 1024 ~ 0.00195
     assert p < 0.01
+
+
+def test_chunk_level_retrieval():
+    chunks = [
+        {"content": "The library fine is Rs 15 per day for week one.", "filename": "lib.txt"},
+        {"content": "Attendance requirement is 82 percent in lectures.", "filename": "att.txt"},
+        {"content": "Exam supplementary fee is Rs 1,150 per credit.", "filename": "exam.txt"},
+    ]
+
+    # Rank 1 match
+    res1 = compute_chunk_level_retrieval(chunks, ["fine", "15"], match_mode="all")
+    assert res1["hit@1"] is True
+    assert res1["hit@3"] is True
+    assert res1["reciprocal_rank"] == 1.0
+    assert res1["matching_rank"] == 1
+
+    # Rank 2 match
+    res2 = compute_chunk_level_retrieval(chunks, ["82", "percent"], match_mode="all")
+    assert res2["hit@1"] is False
+    assert res2["hit@3"] is True
+    assert res2["reciprocal_rank"] == 0.5
+    assert res2["matching_rank"] == 2
+
+    # Rank 3 match
+    res3 = compute_chunk_level_retrieval(chunks, ["1,150"], match_mode="any")
+    assert res3["hit@1"] is False
+    assert res3["hit@3"] is True
+    assert res3["reciprocal_rank"] == pytest.approx(1.0 / 3.0)
+    assert res3["matching_rank"] == 3
+
+    # No match in top 3
+    res_none = compute_chunk_level_retrieval(chunks, ["scholarship", "6,50,000"], match_mode="all")
+    assert res_none["hit@1"] is False
+    assert res_none["hit@3"] is False
+    assert res_none["reciprocal_rank"] == 0.0
+    assert res_none["matching_rank"] is None
+

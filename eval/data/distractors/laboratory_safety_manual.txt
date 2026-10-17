@@ -1,0 +1,15 @@
+CENTRAL SCIENTIFIC INSTRUMENTATION AND LAB SAFETY MANUAL (LAB-SAF-14)
+Section 1. Laboratory Access and Personal Protective Equipment (PPE)
+1.1 Access to all specialized teaching and research laboratories, including Chemistry, Biotechnology, and Materials Science, is restricted to authorized scholars possessing active RFID laboratory clearances.
+1.2 Standard mandatory PPE comprises a full-sleeved 100% cotton laboratory coat, splash-resistant chemical goggles conforming to ANSI Z87.1 standards, and closed-toe leather footwear.
+1.3 Entry into chemical synthesis facilities wearing open sandals, synthetic nylon garments, or shorts is strictly forbidden and results in immediate laboratory eviction.
+
+Section 2. Chemical Storage, Hazard Communication, and Hazardous Waste
+2.1 All chemical receptacles must bear standard Globally Harmonized System (GHS) warning pictograms, lot identifiers, and preparation dates. Unlabeled chemical beakers will be neutralized and discarded.
+2.2 Flammable organic solvents exceeding 5 liters in volume must be stored inside dedicated fire-rated steel safety cabinets fitted with mechanical ventilation.
+2.3 Chemical waste streams must be segregated into designated color-coded containers: Red (halogenated solvents), Yellow (heavy metal solutions), and Blue (aqueous non-toxic solutions).
+2.4 Pouring organic solvents or concentrated acids into municipal drainage sinks incurs a mandatory laboratory suspension of 30 days and an environmental remediation fine of Rs 8,000.
+
+Section 3. Emergency Evacuation and Spill Containment Protocols
+3.1 Every laboratory facility is equipped with an emergency overhead drench shower and eyewash station tested on a weekly basis by Laboratory Technician Mr. V. Satish.
+3.2 In the event of a hazardous material spill exceeding 500 milliliters, students must immediately pull the laboratory alarm lever, evacuate the premises via Fire Exit Corridor 3, and notify the Hazardous Materials Response Unit.

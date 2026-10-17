@@ -1,0 +1,15 @@
+ACADEMIC INTERNSHIP AND PRACTICUM ACCREDITATION GUIDELINES (ACAD-INT-33)
+Section 1. Mandatory Internship Timelines and Credit Weights
+1.1 All candidates enrolled in four-year Bachelor of Technology degree programs must satisfactorily complete an industrial or research internship lasting not less than 8 consecutive weeks.
+1.2 The internship must be undertaken between the conclusion of the sixth semester and the commencement of the seventh semester, carrying 4 academic credits toward degree completion.
+1.3 Internships pursued with non-registered startup companies or unverified training institutes will not be accredited unless approved by Departmental Faculty Coordinator Dr. Ramesh Chandra.
+
+Section 2. Progress Monitoring and Industry Mentor Evaluation
+2.1 Interns must submit a bi-weekly progress memorandum summarizing project assignments, tools utilized, and milestones achieved through the university academic ERP portal.
+2.2 At the conclusion of the internship term, the corporate industry mentor must submit a confidential evaluation appraisal (Form INT-APP-4) assessing technical proficiency, professionalism, and attendance directly to the Dean of Academics.
+2.3 A minimum rating of 'Satisfactory' (Grade B or equivalent) from the corporate supervisor is required to qualify for academic credit defense.
+
+Section 3. Comprehensive Viva-Voce and Final Defense
+3.1 Interns must submit a hardbound technical practicum report of 40 to 60 pages formatted according to university thesis guidelines within 14 days of academic resumption.
+3.2 Candidates defend their project findings before a three-member Departmental Evaluation Committee during the scheduled viva-voce examination in mid-August.
+3.3 Failure to appear for the defense or submission of a plagiarized report results in an 'Incomplete' (I) grade, obligating the candidate to repeat the internship requirement during the following summer vacation.

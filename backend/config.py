@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     MAX_AGENT_ITERATIONS: int = 5
     OLLAMA_JSON_MODE: bool = True
     PROMPT_VARIANT: str = "hardened"  # "hardened" or "baseline"
+    REQUIRE_RETRIEVAL_BEFORE_ABSTAIN: bool = False
 
 
     # RAG Chunker Configuration
@@ -69,9 +70,9 @@ class Settings(BaseSettings):
     RAG_CHUNK_OVERLAP: int = 50
     RAG_TOP_K: int = 3
 
-    @field_validator("OLLAMA_JSON_MODE", mode="before")
+    @field_validator("OLLAMA_JSON_MODE", "REQUIRE_RETRIEVAL_BEFORE_ABSTAIN", mode="before")
     @classmethod
-    def parse_json_mode(cls, v):
+    def parse_bool_flags(cls, v):
         if isinstance(v, str):
             return v.strip().lower() in ("1", "true", "yes", "on")
         return bool(v)

@@ -796,18 +796,24 @@ if "📊 Evaluation" in tab_dict:
             chart_col1, chart_col2 = st.columns(2)
 
             chart_e1 = results_dir / "e1_retrieval_hit_vs_chunk_size.png"
+            chart_e1b = results_dir / "e1b_chunk_level_retrieval.png"
             chart_e2 = results_dir / "e2_reliability_factorial.png"
+            chart_fail = results_dir / "failure_analysis.png"
             chart_perf = results_dir / "latency_and_memory.png"
 
             with chart_col1:
                 if chart_e1.exists():
-                    st.image(str(chart_e1), caption="E1: Retrieval Hit@3 Rate vs Chunk Size", use_container_width=True)
+                    st.image(str(chart_e1), caption="E1: Document-Level Hit@3 vs Chunk Size", use_container_width=True)
+                if chart_e1b.exists():
+                    st.image(str(chart_e1b), caption="E1b: Chunk-Level Hit@1, Hit@3 & MRR (18-Doc Distractor Corpus)", use_container_width=True)
                 if chart_perf.exists():
                     st.image(str(chart_perf), caption="Latency & Peak Ollama RSS Memory", use_container_width=True)
 
             with chart_col2:
                 if chart_e2.exists():
                     st.image(str(chart_e2), caption="E2: Reliability Factorial (Validity & Success)", use_container_width=True)
+                if chart_fail.exists():
+                    st.image(str(chart_fail), caption="Failure Mode Classification Breakdown", use_container_width=True)
 
             # Render Markdown summary text if available
             if summary_md.exists():

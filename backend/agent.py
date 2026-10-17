@@ -561,6 +561,33 @@ class AgentRunner:
             # Step 3: Handle Final Action
             if action_type == "final":
                 final_answer = action_data["answer"]
+
+                # Optional Post-hoc Constraint: Document Assistant must perform retrieval before abstaining
+                if getattr(settings, "REQUIRE_RETRIEVAL_BEFORE_ABSTAIN", False) and agent.name == "Document Assistant":
+                    from eval.metrics import is_abstention
+                    if is_abstention(final_answer):
+                        search_succeeded = any(
+                            st.step_type == "tool" and "search_documents" in st.input_data and not st.output_data.startswith("Tool Execution Error")
+                            for st in db.query(Step).filter(Step.run_id == run_id).all()
+                        )
+                        if not search_succeeded and not getattr(run, "_abstention_nudged", False):
+                            run._abstention_nudged = True
+                            step_counter += 1
+                            record_step(
+                                db=db,
+                                run_id=run_id,
+                                step_number=step_counter,
+                                step_type="policy",
+                                input_data="Policy check: REQUIRE_RETRIEVAL_BEFORE_ABSTAIN",
+                                output_data="Document Assistant attempted to abstain without successful retrieval. Prompting retrieval.",
+                                latency_ms=0.0,
+                            )
+                            messages.append({
+                                "role": "user",
+                                "content": "You must invoke search_documents with an appropriate search query before concluding that information is absent.",
+                            })
+                            continue
+
                 run.status = "completed"
                 run.final_answer = final_answer
                 run.total_latency_ms = (time.time() - start_time) * 1000

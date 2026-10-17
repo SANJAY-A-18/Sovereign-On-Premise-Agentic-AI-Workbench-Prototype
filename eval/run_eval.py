@@ -202,6 +202,35 @@ def verify_dataset_frozen() -> Tuple[bool, str, Dict[str, str]]:
     return all_matched, status, actual_hashes
 
 
+def verify_distractors_frozen() -> Tuple[bool, str, Dict[str, str]]:
+    """Verifies SHA-256 hashes against eval/data/distractors/DISTRACTORS.sha256."""
+    manifest_path = EVAL_ROOT / "data" / "distractors" / "DISTRACTORS.sha256"
+    if not manifest_path.exists():
+        return False, "DISTRACTORS.sha256 missing", {}
+
+    lines = manifest_path.read_text(encoding="utf-8").strip().splitlines()
+    stored = {}
+    for line in lines:
+        parts = line.strip().split()
+        if len(parts) == 2:
+            stored[parts[1]] = parts[0]
+
+    all_matched = True
+    actual_hashes = {}
+    for fn, expected_h in stored.items():
+        fp = EVAL_ROOT / "data" / "distractors" / fn
+        if not fp.exists():
+            all_matched = False
+            continue
+        h = hashlib.sha256(fp.read_bytes()).hexdigest()
+        actual_hashes[fn] = h
+        if h != expected_h:
+            all_matched = False
+
+    status = "verified" if all_matched else "distractors modified"
+    return all_matched, status, actual_hashes
+
+
 def get_git_commit() -> str:
     """Retrieves current git commit hash if available."""
     try:
@@ -230,7 +259,7 @@ def get_real_data_mtime() -> float:
     return latest
 
 
-def setup_isolated_environment(chunk_size: int):
+def setup_isolated_environment(chunk_size: int, include_distractors: bool = False):
     """Initializes isolated databases, vector store, and ingests synthetic docs."""
     from backend.config import settings
     # Override settings for isolated run
@@ -267,12 +296,9 @@ def setup_isolated_environment(chunk_size: int):
 
         seed_default_agents(db)
 
-        # Clear existing Chroma collection chunks
+        # Clear existing Chroma collection
         try:
-            col = vector_store.collection
-            res = col.get()
-            if res and res.get("ids"):
-                col.delete(ids=res["ids"])
+            vector_store.client.delete_collection(vector_store.collection_name)
         except Exception:
             pass
 
@@ -285,7 +311,9 @@ def setup_isolated_environment(chunk_size: int):
         corpus_metadata = {}
         doc_files = sorted(docs_dir.glob("*.txt"))
 
-        for idx, doc_path in enumerate(doc_files, start=1):
+        current_idx = 0
+        for doc_path in doc_files:
+            current_idx += 1
             text = doc_path.read_text(encoding="utf-8")
             chunks = TextChunker.chunk_text(text, chunk_size=chunk_size, chunk_overlap=settings.RAG_CHUNK_OVERLAP)
 
@@ -295,7 +323,7 @@ def setup_isolated_environment(chunk_size: int):
 
             # Add to SQLite Document table
             doc_record = Document(
-                id=idx,
+                id=current_idx,
                 filename=doc_path.name,
                 file_type="txt",
                 file_size=len(text.encode("utf-8")),
@@ -306,8 +334,35 @@ def setup_isolated_environment(chunk_size: int):
             db.commit()
 
             # Add to Chroma
-            vector_store.add_document(document_id=idx, filename=doc_path.name, chunks=chunks)
+            vector_store.add_document(document_id=current_idx, filename=doc_path.name, chunks=chunks)
             corpus_metadata[doc_path.name] = len(chunks)
+
+        # Ingest distractors if requested (for E1b)
+        if include_distractors:
+            distractors_dir = EVAL_ROOT / "data" / "distractors"
+            if distractors_dir.exists():
+                distractor_files = sorted(distractors_dir.glob("*.txt"))
+                for doc_path in distractor_files:
+                    current_idx += 1
+                    text = doc_path.read_text(encoding="utf-8")
+                    chunks = TextChunker.chunk_text(text, chunk_size=chunk_size, chunk_overlap=settings.RAG_CHUNK_OVERLAP)
+
+                    dest = Path(settings.UPLOAD_DIR) / doc_path.name
+                    dest.write_text(text, encoding="utf-8")
+
+                    doc_record = Document(
+                        id=current_idx,
+                        filename=doc_path.name,
+                        file_type="txt",
+                        file_size=len(text.encode("utf-8")),
+                        chunk_count=len(chunks),
+                        uploaded_by=admin_user.id,
+                    )
+                    db.add(doc_record)
+                    db.commit()
+
+                    vector_store.add_document(document_id=current_idx, filename=doc_path.name, chunks=chunks)
+                    corpus_metadata[doc_path.name] = len(chunks)
 
         return admin_user.id, corpus_metadata
     finally:
@@ -327,8 +382,10 @@ def run_benchmark():
     parser.add_argument("--resume", action="store_true", help="Resume interrupted run from output file")
     parser.add_argument("--item-timeout", type=int, default=240, help="Per-item timeout in seconds")
     parser.add_argument("--min-ram", type=float, default=3.0, help="RAM safety floor in GB")
-    parser.add_argument("--retrieval-only", action="store_true", help="Only compute retrieval_hit@3 (no LLM, for E1 chunk-size)")
+    parser.add_argument("--retrieval-only", action="store_true", help="Only compute retrieval metrics (no LLM, for E1/E1b)")
     parser.add_argument("--smoke-test", action="store_true", help="Run 3-item smoke test")
+    parser.add_argument("--distractors", action="store_true", help="Include distractor corpus from eval/data/distractors/ (for E1b)")
+    parser.add_argument("--require-retrieval-before-abstain", action="store_true", help="Enforce retrieval before abstention (post-hoc variant)")
 
     args = parser.parse_args()
 
@@ -345,6 +402,13 @@ def run_benchmark():
     else:
         print(f"[OK] Dataset verification: {dataset_status} (FROZEN.sha256 matches all files).")
 
+    if args.distractors:
+        is_dist_frozen, dist_status, _ = verify_distractors_frozen()
+        if not is_dist_frozen:
+            print(f"[WARNING] Distractor verification: {dist_status}. DISTRACTORS.sha256 mismatch detected.")
+        else:
+            print(f"[OK] Distractor verification: {dist_status} (DISTRACTORS.sha256 matches all files).")
+
     # 4. Check data/ modification time before run
     mtime_before = get_real_data_mtime()
 
@@ -355,11 +419,16 @@ def run_benchmark():
     settings.PROMPT_VARIANT = args.prompt_variant.lower()
     settings.OLLAMA_MODEL = args.model
     settings.RAG_CHUNK_SIZE = args.chunk_size
+    if args.require_retrieval_before_abstain:
+        settings.REQUIRE_RETRIEVAL_BEFORE_ABSTAIN = True
 
     # 6. Setup Isolated Environment
     print(f"\n[INIT] Setting up isolated benchmark workdir at: {WORKDIR}")
-    admin_user_id, corpus_metadata = setup_isolated_environment(chunk_size=args.chunk_size)
-    print(f"[INIT] Ingested synthetic corpus: {corpus_metadata}")
+    admin_user_id, corpus_metadata = setup_isolated_environment(
+        chunk_size=args.chunk_size,
+        include_distractors=args.distractors,
+    )
+    print(f"[INIT] Ingested synthetic corpus ({len(corpus_metadata)} documents): {corpus_metadata}")
 
     # 7. Prepare Output File
     results_dir = EVAL_ROOT / "results"
@@ -439,6 +508,8 @@ def run_benchmark():
             "retry": settings.ENABLE_RETRY,
             "json_mode": settings.OLLAMA_JSON_MODE,
             "prompt_variant": settings.PROMPT_VARIANT,
+            "require_retrieval_before_abstain": getattr(settings, "REQUIRE_RETRIEVAL_BEFORE_ABSTAIN", False),
+            "distractors": args.distractors,
             "retrieval_only": args.retrieval_only,
         },
         "cold_start_s": cold_start_s,
@@ -459,6 +530,7 @@ def run_benchmark():
     from eval.metrics import (
         compute_tool_call_valid,
         compute_retrieval_hit,
+        compute_chunk_level_retrieval,
         compute_citation_valid,
         compute_task_success,
     )
@@ -489,10 +561,16 @@ def run_benchmark():
                 t0 = time.time()
                 mem_monitor.start()
 
-                # 1. Retrieval hit@3 (pure vector search)
+                # 1. Retrieval hit@3 (pure vector search) and chunk-level retrieval
                 query_text = item["question"]
                 top_chunks = vector_store.query(query_text=query_text, top_k=3)
                 retrieval_hit = compute_retrieval_hit(top_chunks, item["source_file"], top_k=3)
+                chunk_retrieval = compute_chunk_level_retrieval(
+                    retrieved_chunks=top_chunks,
+                    expected_keywords=item.get("expected_keywords"),
+                    match_mode=item.get("match", "all"),
+                    top_k=3,
+                )
 
                 if args.retrieval_only:
                     peak_ram = mem_monitor.stop()
@@ -503,14 +581,19 @@ def run_benchmark():
                         "suite": "rag",
                         "repeat": rep,
                         "question": query_text,
+                        "answerable": item.get("answerable", True),
                         "retrieval_hit@3": retrieval_hit,
+                        "chunk_hit@1": chunk_retrieval["hit@1"],
+                        "chunk_hit@3": chunk_retrieval["hit@3"],
+                        "reciprocal_rank": chunk_retrieval["reciprocal_rank"],
+                        "matching_rank": chunk_retrieval["matching_rank"],
                         "latency_s": lat,
                         "peak_ollama_rss_mb": round(peak_ram, 1),
                     }
                     out_file.write(json.dumps(result_record) + "\n")
                     out_file.flush()
                     items_processed += 1
-                    print(f"  [{items_processed}] {item_id} (rep {rep}): hit@3={retrieval_hit} ({lat}s)")
+                    print(f"  [{items_processed}] {item_id} (rep {rep}): doc_hit@3={retrieval_hit}, chunk_hit@1={chunk_retrieval['hit@1']}, chunk_hit@3={chunk_retrieval['hit@3']}, mrr={chunk_retrieval['reciprocal_rank']:.2f} ({lat}s)")
                     continue
 
                 # 2. Full LLM Agent Execution on RAG Question
@@ -564,6 +647,10 @@ def run_benchmark():
                     "tool_call_valid": tool_call_valid,
                     "task_success": task_success,
                     "retrieval_hit@3": retrieval_hit,
+                    "chunk_hit@1": chunk_retrieval["hit@1"],
+                    "chunk_hit@3": chunk_retrieval["hit@3"],
+                    "reciprocal_rank": chunk_retrieval["reciprocal_rank"],
+                    "matching_rank": chunk_retrieval["matching_rank"],
                     "citation_valid": citation_valid,
                     "latency_s": lat,
                     "retries": retries_count,
