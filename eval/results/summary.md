@@ -23,7 +23,7 @@
 | `json_off_retry_on` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A |
 | `json_off_retry_off` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A |
 
-*Note on Latency & Memory Conditions:* Host physical RAM is 7.69 GB (Windows 11). Initial free RAM at benchmark startup measured ~0.62–0.85 GB (requiring `--min-ram 0.1`). In the Oct 16 canonical E2 run, 27.86s was not a clean mean because host memory pressure was elevated (available RAM dipped to 0.11–0.40 GB, warm-up took 11.667s) and 6 items prematurely abstained on turn 1. In the clean Oct 17 run (`posthoc_retrieval_before_abstain`), warm-up cold start dropped to 3.967s, clean mean latency was 40.06s (median 43.09s, std 14.45s), and peak Ollama host RSS was 2,335.4 MB.
+*Note on Latency & Memory Conditions:* All latency and RAM numbers were measured at ~0.8 GB free RAM on an 8 GB host with the IDE open; memory-constrained. Note that 40.06s is the post-hoc variant (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`), not the canonical configuration. The canonical configuration (27.86s) and post-hoc variant runs are not directly comparable because host memory load was not controlled. Regarding the canonical 27.86s mean, it is hypothesized (not an empirical finding) that 6 premature 1-turn abstentions without tool calling lowered the average duration, while intermittent OS memory paging during multi-turn items introduced latency stalls. In the post-hoc run, warm-up cold start was 3.967s, mean latency was 40.06s (median 43.09s, std 14.45s), and peak Ollama host RSS was 2,335.4 MB.
 
 ## Experiment 3: Prompt Variant (Baseline vs Hardened)
 | Variant | Status | n | First-Try Validity | 95% CI | Task Success | 95% CI |
@@ -33,13 +33,13 @@
 
 ## Post-Hoc Architectural Variant: REQUIRE_RETRIEVAL_BEFORE_ABSTAIN
 *Evaluated as a post-hoc intervention forcing one retrieval before accepting Document Assistant abstentions.*
-| Configuration | Status | n | First-Try Validity | 95% CI | Task Success (Strict) | 95% CI | Task Success (Adjudicated) | 95% CI | Clean Mean Latency | Peak Ollama RSS |
+| Configuration | Status | n | First-Try Validity | 95% CI | Task Success (Strict) | 95% CI | Task Success (Adjudicated) | 95% CI | Mean Latency | Peak Ollama RSS |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `POST-HOC: require_retrieval_before_abstain` | Completed | 45 | **100.0%** | [92.1%, 100.0%] | **88.9%** | [76.5%, 95.2%] | **91.1%** | [79.3%, 96.5%] | 40.06s | 2335.4 MB |
+| `POST-HOC: require_retrieval_before_abstain` | Completed | 45 | **100.0%** | [92.1%, 100.0%] | **88.9%** | [76.5%, 95.2%] | **91.1%** | [79.3%, 96.5%] | 40.06s* | 2335.4 MB |
 
 ### Post-Hoc Regressions and Validation Scope
 - **Regressions (b=6 gained, c=2 lost):**
-  1. `rag_q03`: In post-hoc, the model interpreted the absence of an explicit phrase linking 'petitions' directly to the CMO title as a reason to abstain completely rather than citing Dr. K. Radhakrishnan.
+  1. `rag_q03`: In the canonical run, the recorded 'pass' was a scorer false positive (the answer contained the name 'Radhakrishnan' while stating the documents did not specify the officer). In post-hoc, the model reached the same negative conclusion without naming the officer, failing the keyword match.
   2. `rag_q21`: In post-hoc, the model relied on generic university priors ('Medical Absence Form', 'Academic Office') instead of conditioning strictly on retrieved text mentioning Form MED-401 and Clause 2.1.
 - **Validation Scope:** Validation of this post-hoc intervention was strictly a unit test (`tests/test_require_retrieval_before_abstain.py`) plus the 45-item evaluation benchmark, not a broad multi-domain regression run.
 

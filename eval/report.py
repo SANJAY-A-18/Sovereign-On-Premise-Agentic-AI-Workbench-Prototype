@@ -783,7 +783,14 @@ def main():
             md_lines.append(f"| `{label}` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A |")
 
     md_lines.append("")
-    md_lines.append("*Note on Latency & Memory Conditions:* Host physical RAM is 7.69 GB (Windows 11). Initial free RAM at benchmark startup measured ~0.62–0.85 GB (requiring `--min-ram 0.1`). In the Oct 16 canonical E2 run, 27.86s was not a clean mean because host memory pressure was elevated (available RAM dipped to 0.11–0.40 GB, warm-up took 11.667s) and 6 items prematurely abstained on turn 1. In the clean Oct 17 run (`posthoc_retrieval_before_abstain`), warm-up cold start dropped to 3.967s, clean mean latency was 40.06s (median 43.09s, std 14.45s), and peak Ollama host RSS was 2,335.4 MB.")
+    md_lines.append(
+        "*Note on Latency & Memory Conditions:* All latency and RAM numbers were measured at ~0.8 GB free RAM on an 8 GB host with the IDE open; memory-constrained. "
+        "Note that 40.06s is the post-hoc variant (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`), not the canonical configuration. "
+        "The canonical configuration (27.86s) and post-hoc variant runs are not directly comparable because host memory load was not controlled. "
+        "Regarding the canonical 27.86s mean, it is hypothesized (not an empirical finding) that 6 premature 1-turn abstentions without tool calling lowered the average duration, "
+        "while intermittent OS memory paging during multi-turn items introduced latency stalls. In the post-hoc run, warm-up cold start was 3.967s, "
+        "mean latency was 40.06s (median 43.09s, std 14.45s), and peak Ollama host RSS was 2,335.4 MB."
+    )
 
     md_lines.append("")
     md_lines.append("## Experiment 3: Prompt Variant (Baseline vs Hardened)")
@@ -806,19 +813,19 @@ def main():
         md_lines.append("")
         md_lines.append("## Post-Hoc Architectural Variant: REQUIRE_RETRIEVAL_BEFORE_ABSTAIN")
         md_lines.append("*Evaluated as a post-hoc intervention forcing one retrieval before accepting Document Assistant abstentions.*")
-        md_lines.append("| Configuration | Status | n | First-Try Validity | 95% CI | Task Success (Strict) | 95% CI | Task Success (Adjudicated) | 95% CI | Clean Mean Latency | Peak Ollama RSS |")
+        md_lines.append("| Configuration | Status | n | First-Try Validity | 95% CI | Task Success (Strict) | 95% CI | Task Success (Adjudicated) | 95% CI | Mean Latency | Peak Ollama RSS |")
         md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
         p_v_ci = posthoc_summary.get("tool_call_valid_ci", (0, 0))
         p_s_ci = posthoc_summary.get("task_success_ci", (0, 0))
         # Adjudicated: rag_q23 false negative credited (+1)
         p_adj_pt, p_adj_low, p_adj_high = compute_wilson_ci(41, 45)
         md_lines.append(
-            f"| `POST-HOC: require_retrieval_before_abstain` | Completed | {posthoc_summary['n']} | **{posthoc_summary['tool_call_valid_rate']*100:.1f}%** | [{p_v_ci[0]*100:.1f}%, {p_v_ci[1]*100:.1f}%] | **{posthoc_summary['task_success_rate']*100:.1f}%** | [{p_s_ci[0]*100:.1f}%, {p_s_ci[1]*100:.1f}%] | **{p_adj_pt*100:.1f}%** | [{p_adj_low*100:.1f}%, {p_adj_high*100:.1f}%] | {posthoc_summary['mean_latency_s']}s | {posthoc_summary['peak_ollama_rss_mb']} MB |"
+            f"| `POST-HOC: require_retrieval_before_abstain` | Completed | {posthoc_summary['n']} | **{posthoc_summary['tool_call_valid_rate']*100:.1f}%** | [{p_v_ci[0]*100:.1f}%, {p_v_ci[1]*100:.1f}%] | **{posthoc_summary['task_success_rate']*100:.1f}%** | [{p_s_ci[0]*100:.1f}%, {p_s_ci[1]*100:.1f}%] | **{p_adj_pt*100:.1f}%** | [{p_adj_low*100:.1f}%, {p_adj_high*100:.1f}%] | {posthoc_summary['mean_latency_s']}s* | {posthoc_summary['peak_ollama_rss_mb']} MB |"
         )
 
         md_lines.append("\n### Post-Hoc Regressions and Validation Scope")
         md_lines.append("- **Regressions (b=6 gained, c=2 lost):**")
-        md_lines.append("  1. `rag_q03`: In post-hoc, the model interpreted the absence of an explicit phrase linking 'petitions' directly to the CMO title as a reason to abstain completely rather than citing Dr. K. Radhakrishnan.")
+        md_lines.append("  1. `rag_q03`: In the canonical run, the recorded 'pass' was a scorer false positive (the answer contained the name 'Radhakrishnan' while stating the documents did not specify the officer). In post-hoc, the model reached the same negative conclusion without naming the officer, failing the keyword match.")
         md_lines.append("  2. `rag_q21`: In post-hoc, the model relied on generic university priors ('Medical Absence Form', 'Academic Office') instead of conditioning strictly on retrieved text mentioning Form MED-401 and Clause 2.1.")
         md_lines.append("- **Validation Scope:** Validation of this post-hoc intervention was strictly a unit test (`tests/test_require_retrieval_before_abstain.py`) plus the 45-item evaluation benchmark, not a broad multi-domain regression run.")
 
