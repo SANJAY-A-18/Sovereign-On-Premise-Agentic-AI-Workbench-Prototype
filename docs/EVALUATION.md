@@ -126,37 +126,46 @@ Retrieval document hit rate was a uniform 100.0% across all three chunk sizes (3
 To rigorously test chunking under realistic vector competition, 15 synthetic policy documents (29.9 kB total) were added under `eval/data/distractors/` (combined corpus = 18 documents, 51–142 indexed chunks). We evaluated chunk-level retrieval: a hit requires that the retrieved chunk actually contains the ground truth answer text / expected keywords. Evaluated over all $n = 24$ answerable RAG queries.
 
 | Chunk Size | Corpus Docs | Answerable Queries ($n$) | Chunk Hit@1 | 95% Wilson CI | Chunk Hit@3 | 95% Wilson CI | MRR | Key Empirical Finding |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **300 characters** | 18 | 24 | **75.0%** (18/24) | [55.1%, 88.0%] | **87.5%** (21/24) | [69.0%, 95.7%] | **0.8056** | Multi-sentence clauses split across chunk boundaries |
-| **500 characters** | 18 | 24 | **75.0%** (18/24) | [55.1%, 88.0%] | **91.7%** (22/24) | [74.2%, 97.7%] | **0.8333** | Moderate preservation of single-paragraph rules |
-| **800 characters** | 18 | 24 | **83.3%** (20/24) | [64.1%, 93.3%] | **95.8%** (23/24) | [79.8%, 99.3%] | **0.8889** | **Highest Chunk Hit@3 and MRR** |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **300 characters** | 18 | 24 | **75.0%** (18/24) | [55.1%, 88.0%] | **87.5%** (21/24) | [69.0%, 95.7%] | **0.8056** | Multi-sentence clauses split across chunk boundaries; CIs overlap at n=24 |
+| **500 characters** | 18 | 24 | **75.0%** (18/24) | [55.1%, 88.0%] | **91.7%** (22/24) | [74.2%, 97.7%] | **0.8333** | Multi-sentence clauses split across chunk boundaries; CIs overlap at n=24 |
+| **800 characters** | 18 | 24 | **83.3%** (20/24) | [64.1%, 93.3%] | **95.8%** (23/24) | [79.8%, 99.3%] | **0.8889** | Highest point estimate; 95% CIs overlap across sizes at n=24 (no superiority claim) |
 
-**Empirical Conclusion on Chunk Size:**
-When evaluated with distractor competition and verified chunk-level keyword containment, **chunk size 800 is empirically superior to chunk sizes 300 and 500** (Chunk Hit@3: 95.8% vs 91.7% vs 87.5%; MRR: 0.8889 vs 0.8333 vs 0.8056). Institutional regulations frequently contain dependent conditions, exceptions, and fee amounts spanning multiple sentences. Smaller chunks (300–500 chars) fragment these clauses, separating the qualification from the quantitative rule. Chunk size 800 preserves contextual integrity without exceeding the 4,096 token context window.
+**Empirical Finding on Chunk Size (No Claim of Superiority):**
+When evaluated with distractor competition and verified chunk-level keyword containment across the $n = 24$ answerable queries, chunk size 800 achieved the highest point estimates for both Chunk Hit@3 (95.8%, 23/24) and MRR (0.8889), compared to 91.7% (22/24) and MRR 0.8333 for chunk size 500, and 87.5% (21/24) and MRR 0.8056 for chunk size 300.
+
+However, at $n = 24$, the 95% Wilson confidence intervals substantially overlap across all three window sizes:
+- **Chunk Hit@3:** 300 chars [69.0%, 95.7%] vs. 500 chars [74.2%, 97.7%] vs. 800 chars [79.8%, 99.3%]
+- **Chunk Hit@1:** 300 chars [55.1%, 88.0%] vs. 500 chars [55.1%, 88.0%] vs. 800 chars [64.1%, 93.3%]
+
+Because of this statistical overlap, **no claim of statistical superiority can be made**. The point-estimate advantage of chunk size 800 illustrates a qualitative pattern: institutional regulations frequently contain dependent conditions, exceptions, and fee amounts spanning multiple sentences. Smaller chunks (300–500 chars) fragment these clauses, separating the qualification from the quantitative rule, whereas chunk size 800 preserves contextual integrity. A larger evaluation corpus and query set would be required to establish a statistically significant separation.
 
 ---
 
 ### 5.3 Experiment 2: Reliability Factorial (JSON Mode x Retry)
 Evaluated on `qwen2.5:3b`.
 
-| Configuration | Status | $n$ | First-Try Validity | 95% Wilson CI | Task Success | 95% Wilson CI | Mean Latency | Peak Ollama RSS |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `json_on_retry_on` | Completed | 45 | **100.0%** (45/45) | [92.1%, 100.0%] | **80.0%** (36/45) | [66.2%, 89.1%] | 27.86s | 2,351.3 MB |
-| `json_on_retry_off` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A |
-| `json_off_retry_on` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A |
-| `json_off_retry_off`| *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A |
+| Configuration | Status | $n$ | First-Try Validity | 95% Wilson CI | Task Success (Strict) | 95% Wilson CI | Task Success (Adjudicated) | 95% Wilson CI | Latency Note | Peak Ollama RSS |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `json_on_retry_on` | Completed | 45 | **100.0%** (45/45) | [92.1%, 100.0%] | **80.0%** (36/45) | [66.2%, 89.1%] | **82.2%** (37/45) | [68.7%, 90.7%] | 27.86s* *(pressured)* | 2,351.3 MB |
+| `json_on_retry_off` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| `json_off_retry_on` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| `json_off_retry_off`| *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 
-*Reason for unrun configurations:* On an 8 GB laptop with ~0.4 GB available host memory, running the full 4-cell factorial across 3 repeats (540 total inference calls, estimated >6 hours of continuous CPU execution) would induce severe thermal throttling and system instability. `json_on_retry_on` was fully verified with $n=45$ real items. Because zero JSON format errors occurred when JSON mode was ON (first-try validity = 100%, 0 retries required across all 45 items), format errors did not occur with JSON mode enabled.
+*\*Note on Canonical Latency & Memory Conditions:* The 27.86s mean in the Oct 16 canonical E2 run was measured under elevated host memory pressure (available RAM dipped to 0.11–0.40 GB, cold start was 11.667s) and was lowered by 6 premature 1-turn abstentions without tool calling. It was not an uncontended clean mean. In the fresh clean run conducted under controlled host memory (~0.82 GB initial free RAM), clean mean latency per item was **40.06s** (median 43.09s, std 14.45s, cold start 3.967s) and peak Ollama host RSS was **2,335.4 MB**.
+
+*Reason for unrun configurations:* On an 8 GB laptop with ~0.4 GB available host memory during factorial planning, running the full 4-cell factorial across 3 repeats (540 total inference calls, estimated >6 hours of continuous CPU execution) would induce severe thermal throttling and system instability. `json_on_retry_on` was fully verified with $n=45$ real items. Because zero JSON format errors occurred when JSON mode was ON (first-try validity = 100%, 0 retries required across all 45 items), format errors did not occur with JSON mode enabled.
 
 ### 5.4 Experiment 3: Prompt Variant (Hardened vs Baseline)
 - **Hardened (Default):** Includes Rules 8 and 9 explicitly forcing immediate invocation of `read_sql` and `search_documents`.
 - **Baseline:** Omits Rules 8 and 9.
 
-| Variant | Status | $n$ | First-Try Validity | Task Success | Citation Validity | Mean Latency |
+| Variant | Status | $n$ | First-Try Validity | Task Success (Strict) | Task Success (Adjudicated) | Citation Validity |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Hardened** (Rules 8 & 9) | Completed | 45 | **100.0%** (45/45) | **80.0%** (36/45) | **100.0%** (45/45) | 27.86s |
+| **Hardened** (Rules 8 & 9) | Completed | 45 | **100.0%** (45/45) | **80.0%** (36/45) | **82.2%** (37/45) | **100.0%** (45/45) |
 | **Baseline** (Rules 8 & 9 omitted) | *not run* | 0 | N/A | N/A | N/A | N/A |
 
+*Note:* In `summary.csv`, the redundant duplicate row for `e3_prompt_hardened` has been removed to avoid double-counting the identical configuration from E2.
 
 *Reason for unrun baseline:* Preserved machine health and prioritized full verification of the primary hardened configuration within the execution session.
 
@@ -169,10 +178,10 @@ To remedy the dominant failure mode observed in the pre-registered baseline (whe
 
 This feature was validated first against `tests/regression_prompts.json` in unit test `tests/test_require_retrieval_before_abstain.py` (passed), and then evaluated over the complete 45-item evaluation benchmark:
 
-| Configuration | Status | $n$ | First-Try Validity | 95% Wilson CI | Task Success | 95% Wilson CI | Mean Latency | Peak Ollama RSS |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Canonical Pre-Registered** (`json_on_retry_on`) | Completed | 45 | **100.0%** (45/45) | [92.1%, 100.0%] | **80.0%** (36/45) | [66.2%, 89.1%] | 27.86s | 2,351.3 MB |
-| **Post-Hoc Variant** (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`) | Completed | 45 | **100.0%** (45/45) | [92.1%, 100.0%] | **88.9%** (40/45) | [76.5%, 95.2%] | 40.06s | 2,335.4 MB |
+| Configuration | Status | $n$ | First-Try Validity | 95% Wilson CI | Task Success (Strict) | 95% Wilson CI | Task Success (Adjudicated) | 95% Wilson CI | Clean Mean Latency | Peak Ollama RSS |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Canonical Pre-Registered** (`json_on_retry_on`) | Completed | 45 | **100.0%** (45/45) | [92.1%, 100.0%] | **80.0%** (36/45) | [66.2%, 89.1%] | **82.2%** (37/45) | [68.7%, 90.7%] | 27.86s* | 2,351.3 MB |
+| **Post-Hoc Variant** (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`) | Completed | 45 | **100.0%** (45/45) | [92.1%, 100.0%] | **88.9%** (40/45) | [76.5%, 95.2%] | **91.1%** (41/45) | [79.3%, 96.5%] | **40.06s** | **2,335.4 MB** |
 
 #### Paired McNemar Test (Canonical vs Post-Hoc Variant, $n=45$ common items):
 - **Concordant Pairs:** Both Pass = 34, Both Fail = 3
@@ -181,14 +190,27 @@ This feature was validated first against `tests/regression_prompts.json` in unit
   - Canonical Pass $\rightarrow$ Post-Hoc Fail ($c$): **2 items** (`rag_q03`, `rag_q21`)
 - **Total Discordant Pairs ($b + c$):** 8
 - **Exact Two-Sided McNemar p-value:** **0.28906**
-- **Statistical Note on Sample Size:** Because the total number of discordant pairs ($b + c = 8$) is less than 10, the sample size is insufficient to reject the null hypothesis at the $\alpha = 0.05$ level, despite the notable empirical gain in task success rate (+8.9 percentage points).
+- **Statistical Note on Sample Size:** Because the total number of discordant pairs ($b + c = 8$) is less than 10, the sample size is insufficient to reject the null hypothesis at the $\alpha = 0.05$ level, despite the notable empirical gain in task success rate (+8.9 percentage points strict, +8.9 percentage points adjudicated).
+
+#### Post-Hoc Regressions and Validation Scope
+The post-hoc intervention produced exactly **2 regressions** ($c=2$ items that passed in the canonical run but failed under post-hoc forced retrieval):
+1. **`rag_q03` ("Who is the Chief Medical Officer to whom medical petitions must be submitted?"):**
+   - **Expected Keyword:** `Radhakrishnan`
+   - **Cause:** In the canonical run, the model retrieved `attendance_rules.txt` and stated: *"...The documents only mention Dr. K. Radhakrishnan as the Chief Medical Officer, but do not specify that medical petitions must be submitted to him."* The string `"Radhakrishnan"` satisfied the keyword matcher. In the post-hoc run, the model interpreted the phrasing strictly and concluded that the text did not explicitly specify the officer for petitions, outputting an explicit abstention: *"Based on the provided documents, there is no information about the Chief Medical Officer to whom medical petitions must be submitted for medical petitions. The documents do not contain this information."* It abstained without mentioning the name, resulting in a keyword match failure.
+2. **`rag_q21` ("If a student falls ill and needs to miss lectures, what is the official form that must be filed, who reviews it, and what is the extent of attendance relief permitted?"):**
+   - **Expected Keywords:** `['MED-401', 'Radhakrishnan', '7']`
+   - **Cause:** In the canonical run, the model retrieved the clauses and correctly cited `Form MED-401`, `Dr. K. Radhakrishnan`, and `7 percentage points`. In the post-hoc run, after forced retrieval, the model failed to condition strictly on the retrieved text and instead hallucinated generic university priors: *"'Medical Absence Form' or a similar document... typically reviewed by the Academic Office or the Dean's Office"*, missing the specific keywords.
+
+> [!WARNING]
+> **Validation Scope Disclaimer:**
+> The validation of the `REQUIRE_RETRIEVAL_BEFORE_ABSTAIN` interceptor was strictly a unit test (`tests/test_require_retrieval_before_abstain.py`) plus the 45-item evaluation benchmark. It was **not** evaluated on a broad multi-domain regression suite. Consequently, while it effectively resolved 6 premature abstention failures on this specific institutional benchmark, forcing retrieval before abstention carries the potential to induce regressions on open-domain queries (such as hallucinating generic answers on true out-of-domain queries or over-interpreting retrieved context).
 
 ---
 
 ### 5.6 Comprehensive Failure Analysis
 
 #### The 9 Failed Items Clarified
-In the pre-registered canonical configuration (`e2_json_on_retry_on.jsonl`, $n=45$), exactly **9 items failed** (36 succeeded, yielding $\frac{36}{45} = 80.0\%$). An earlier draft mentioned 7 failures due to a manual counting oversight; the exact count from the JSONL trace is 9. Every failed item ID and its empirical breakdown is presented below:
+In the pre-registered canonical configuration (`e2_json_on_retry_on.jsonl`, $n=45$), exactly **9 items failed** under strict keyword scoring (36 succeeded, yielding $\frac{36}{45} = 80.0\%$). An earlier draft mentioned 7 failures due to a manual counting oversight; the exact count from the JSONL trace is 9. Every failed item ID and its empirical breakdown is presented below:
 
 | Item ID | Suite | Question | Expected Keyword / Ground Truth | Model Response Summary | Classified Failure Cause |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -198,13 +220,28 @@ In the pre-registered canonical configuration (`e2_json_on_retry_on.jsonl`, $n=4
 | `rag_q19` | rag | Daily overdue fine rate from day 8 onward | `['40']` | "The provided documents do not contain this information." | `premature_abstention_without_tool_call` |
 | `rag_q20` | rag | Daily session cap on Cyber Commons workstations | `['90', 'minutes']` | "The provided documents do not contain this information." | `premature_abstention_without_tool_call` |
 | `rag_q22` | rag | Exam hall admission cutoff and earliest exit time | `['20', '45']` | "The provided documents do not contain this information." | `premature_abstention_without_tool_call` |
-| `rag_q23` | rag | Can undergraduates take out rare manuscripts from Wing C | `['cannot', 'CLRC-SEC-9']` | "Undergraduate students are not allowed to take out rare manuscripts from Wing C..." *(Used "are not allowed to" instead of required keyword "cannot")* | `wrong_answer_after_retrieval` |
+| `rag_q23` | rag | Can undergraduates take out rare manuscripts from Wing C | `['cannot', 'CLRC-SEC-9']` | "Undergraduate students are not allowed to take out rare manuscripts from Wing C. A special badge named CLRC-SEC-9 is needed..." *(Correct answer; keyword "cannot" not matched)* | `scorer_false_negative` (`wrong_answer_after_retrieval`) |
 | `rag_q27` | rag | Passing percentage for foreign language elective *(Decoy)* | `['do not know', 'not mentioned']` | Hallucinated exam passing score (42% / 50%) instead of abstaining | `wrong_answer_after_retrieval` |
 | `agent_doc_03` | agent | Library charter infraction fee for unauthorized P2P | `['3,200', '3200']` | Initial tool arguments formatting error followed by model abstention | `wrong_answer_after_retrieval` |
 
+#### Scorer False Negative Report: `rag_q23`
+Item `rag_q23` represents an automated string-scoring false negative:
+- **Question:** *"Can undergraduate students take out rare manuscripts from Wing C, and what special badge is needed for on-site inspection?"*
+- **Ground Truth Expected Keywords:** `['cannot', 'CLRC-SEC-9']` (match: all)
+- **Model Output:** *"Undergraduate students are not allowed to take out rare manuscripts from Wing C. A special badge named CLRC-SEC-9 is needed for on-site inspection of these rare manuscripts."*
+- **Adjudication:** The model correctly retrieved `library_rules.txt`, correctly identified that undergraduate students are forbidden from removing rare manuscripts, and provided the exact required badge identifier `CLRC-SEC-9`. The response is factually and semantically correct. It was scored as a failure solely because the model formulated the prohibition as *"are not allowed to"* rather than matching the literal keyword string *"cannot"*.
+
+#### Strict vs. Adjudicated Benchmark Success Rates
+Crediting `rag_q23` yields the adjudicated success rate:
+
+| Metric | Canonical Pre-Registered (E2) | Post-Hoc Architectural Variant |
+| :--- | :--- | :--- |
+| **Strict Task Success Rate** | **80.0%** (36/45) [66.2%, 89.1%] | **88.9%** (40/45) [76.5%, 95.2%] |
+| **Adjudicated Task Success Rate** | **82.2%** (37/45) [68.7%, 90.7%] | **91.1%** (41/45) [79.3%, 96.5%] |
+
 #### Taxonomy Breakdown Across All 5 Specified Causes:
 - **`premature_abstention_without_tool_call`:** **6 items (66.7%)** — Model produced an abstention without searching documents.
-- **`wrong_answer_after_retrieval`:** **3 items (33.3%)** — Document retrieved, but keyword phrasing differed or model hallucinated a decoy.
+- **`wrong_answer_after_retrieval`:** **3 items (33.3%)** — Includes 1 scorer false negative (`rag_q23`), 1 hallucinated decoy (`rag_q27`), and 1 agent argument retry failure (`agent_doc_03`).
 - **`wrong_tool`:** **0 items (0.0%)** — Model never selected an inappropriate tool.
 - **`invalid_json`:** **0 items (0.0%)** — With JSON mode enabled, schema adherence was 100%.
 - **`timeout`:** **0 items (0.0%)** — No item exceeded the inference execution limit.
@@ -215,23 +252,25 @@ The categorized failure distribution is visualized in `eval/results/failure_anal
 
 ## 6. System Resource Footprint & Latency Conditions (8 GB Hardware Budget)
 
-### 6.1 Host Memory Pressure Context & Clean Runs
-During initial exploratory prototyping on this 8 GB physical RAM machine, background applications (active browser tabs, IDE processes) pushed host available RAM below 0.5 GB, causing memory paging, swapping thrashing, and unrepresentative latency spikes. 
+### 6.1 Host Memory Pressure Context, Measured Free RAM & Clean Runs
+Benchmarking local LLM inference alongside ChromaDB vector storage on consumer hardware (7.69 GB usable RAM, Windows 11) requires strict measurement of host memory states.
 
-To ensure honest and reproducible benchmarking:
-1. All earlier exploratory latency measurements were discarded.
-2. The benchmark harness was upgraded with an active `psutil` memory safety guard (`check_ram_safety`).
-3. Clean benchmarks were executed under controlled memory conditions, establishing genuine baseline latencies:
-   - **Mean Execution Latency (Canonical E2):** **27.86 seconds per item** (Std Dev: 12.90s, Median: 31.41s)
-   - **Mean Execution Latency (Post-Hoc Variant):** **40.06 seconds per item** (Std Dev: 14.45s, Median: 43.09s, reflecting the second inference turn after retrieval)
-   - **Peak Ollama Host Process RSS:** **2,351.3 MB (~2.29 GB)** across all Ollama host and llama-server child processes
-   - **Cold Start Warm-Up Latency:** **11.67 seconds** (initial model load into memory)
-   - **Per-Item Latency Breakdown:**
-     - Pure Vector Search (`nomic-embed-text`): **2.34s - 2.41s**
-     - Calculator Agent Tasks: **12.3s - 19.4s**
-     - SQL Analytical Tasks (with approval & execution): **17.5s - 46.9s**
-     - Document Assistant Tasks: **35.0s - 64.2s**
-   - **Available RAM Safety Floor Observed:** When Ollama holds `qwen2.5:3b` in memory alongside IDE processes, host available RAM drops to between 0.11 GB and 0.40 GB. The memory guard correctly prevented operating system freezes.
+#### Measured Free RAM at the Start of Each Run:
+Windows 11 base operating system services and typical desktop background processes consume approximately 6.7 GB to 7.1 GB of RAM on this 8 GB machine. Across all experimental executions, physical available RAM was sampled using `psutil` at run start:
+- **Retrieval-Only Benchmarks (E1 & E1b):** Initial available RAM measured **~0.84 GB**. Mean retrieval latency across ChromaDB vector search was **2.34s – 2.37s** (std 0.01s – 0.14s). Peak Ollama generation RSS is recorded as **N/A** in `summary.csv` because no LLM generation process was invoked.
+- **Earlier Pressured Canonical E2 Run (Oct 16):** Initial available RAM measured **~0.65 GB**. During execution, host memory dipped as low as 0.11 GB – 0.40 GB, inducing memory paging and an elevated warm-up cold start of **11.667s**. Furthermore, 6 answerable items prematurely returned 1-turn abstentions without executing retrieval tools (yielding brief 1-turn completions). Consequently, **27.86 seconds was not an uncontended clean mean**, but rather a figure influenced by memory paging stalls on multi-turn items and brief 1-turn premature abstentions.
+- **Fresh Clean Benchmark Run (`posthoc_retrieval_before_abstain`, Oct 17):** Conducted under controlled conditions with background applications minimized; initial available RAM measured **~0.82 GB** (running with `--min-ram 0.1`). Warm-up cold start dropped from 11.667s to **3.967s**. The true clean mean latency per item was **40.06 seconds** (median **43.09s**, std **14.45s**, min **12.73s**, max **64.19s**). Peak Ollama host RSS was **2,335.4 MB (~2.28 GB)**.
+- **Real Host Live Acceptance Verification (`scripts/live_check.py 1`):** Measured at start with **~0.85 GB** available RAM; peak Ollama process RAM was **2,232.04 MB** and peak backend process RAM was **167.11 MB**.
+
+#### Detailed Per-Task Latency Breakdown (From Clean Benchmark Run):
+- **Pure Vector Search (`nomic-embed-text` on ChromaDB):** **2.34s – 2.37s**
+- **Calculator Agent Tasks ($n = 5$):** Mean **16.44s** (median **16.08s**, min **12.73s**, max **19.36s**)
+- **SQL Analytical Tasks ($n = 5$):** Mean **24.02s** (median **18.76s**, min **17.58s**, max **46.88s**)
+- **Document Assistant Tasks ($n = 5$):** Mean **45.33s** (median **44.11s**, min **36.16s**, max **60.88s**)
+- **RAG Policy Questions ($n = 30$):** Mean **45.79s** (median **45.94s**, min **22.34s**, max **64.19s**)
+
+#### Memory Safety Safeguards:
+When Ollama holds `qwen2.5:3b` in host memory alongside the backend and vector store, total system memory utilization exceeds 87% (available RAM hovers between 0.60 GB and 0.95 GB). The `psutil`-based safety guard (`check_ram_safety` configured to `--min-ram 0.1`) actively ensured that runs did not cause operating system kernel panics or swapping thrashing.
 
 ---
 
@@ -268,12 +307,19 @@ Fresh validation runs performed directly on the `evaluation` branch:
 
 ## 8. Threats to Validity
 
-1. **Small Sample Size ($n = 45$):** While $n=45$ provides a realistic baseline for a student capstone project, confidence intervals span approximately $\pm 8\%$.
-2. **Single Hardware Node:** Executed exclusively on an Intel 8 GB Windows laptop. GPU acceleration (CUDA/ROCm) would substantially reduce inference latencies (from ~34s to <5s).
-3. **Synthetic Policy Corpus:** The documents were crafted with explicit numerical and named rules. Real-world university documents often feature ambiguous formatting, footnotes, and OCR noise.
-4. **Deterministic vs. Stochastic Temperature:** All runs used temperature $T=0.2$ to balance deterministic reasoning with response naturalness.
-5. **Sequential Ollama Queue:** Concurrent queries were not evaluated; Ollama executes requests sequentially on CPU.
-6. **Single Evaluated Model:** Only `qwen2.5:3b` was benchmarked.
+The empirical findings of this benchmark must be interpreted within the context of four primary methodological and hardware constraints:
+
+1. **Small Sample Size ($n = 45$):**
+   The primary benchmark evaluation set contains 45 items (30 RAG questions and 15 agent tasks). While $n = 45$ is rigorous for an on-premise local LLM benchmark on constrained hardware (representing ~30 minutes of continuous CPU inference per run), 95% Wilson confidence intervals span roughly $\pm 8\%$ to $\pm 13\%$ (e.g., [66.2%, 89.1%] for an 80.0% rate). As demonstrated by the paired McNemar test on discordant pairs ($b + c = 8 < 10$, $p = 0.289$), observed point-estimate gains cannot be proven statistically significant at the $\alpha = 0.05$ level without expanding the item pool to $n \ge 100$.
+
+2. **Synthetic Policy Documents:**
+   The evaluation corpus comprises 3 core documents (1,500–2,500 chars) and 15 distractor documents crafted with explicit numerical and named institutional rules. Although designed to mimic real university statutes, synthetic documents feature clean typography, clear section headings, and explicit parameters. Real-world enterprise and institutional corpora typically feature unstructured layouts, multi-page scanned PDFs, OCR transcription errors, ambiguous footnotes, complex multi-column tables, and contradictory administrative amendments, which present greater vector retrieval noise.
+
+3. **Single Repeat ($r = 1$):**
+   Due to the 8 GB host memory budget and CPU inference execution duration (~40 seconds per item; >30 minutes per 45-item run), all benchmark configurations were evaluated across a single full repeat ($r = 1$). A low decoding temperature ($T = 0.2$) was enforced to maximize determinism. Nonetheless, run-to-run stochastic variance in tool generation order and sampling fluctuations across multiple seeds remain unmeasured.
+
+4. **Single Evaluated Model (`qwen2.5:3b`):**
+   All evaluation data, JSON schema adherence rates, premature abstention rates, and post-hoc retrieval behaviors were measured exclusively on `qwen2.5:3b` under Ollama on CPU. Findings cannot be directly extrapolated to larger parameter sizes (e.g. 7B, 14B, 32B) or other model families (such as Llama-3, Mistral, or Gemma). Larger models may possess stronger inherent instruction following that could obviate the need for post-hoc retrieval interceptors, but would require hardware with at least 16 GB to 32 GB of system RAM.
 
 ---
 

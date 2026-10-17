@@ -263,6 +263,8 @@ def generate_summary_csv(
 
         # Regular experiments
         for exp_tag, summary in all_results.items():
+            if exp_tag == "e3_prompt_hardened":
+                continue  # Skip duplicate row; identical to e2_json_on_retry_on
             if summary.get("status") == "not run":
                 writer.writerow({
                     "experiment": exp_tag.split("_")[0].upper(),
@@ -335,7 +337,7 @@ def generate_summary_csv(
                     "mean_latency_s": s["mean_latency_s"],
                     "median_latency_s": s["mean_latency_s"],
                     "std_latency_s": 0.0,
-                    "peak_ollama_rss_mb": 0.0,
+                    "peak_ollama_rss_mb": "N/A",
                     "cold_start_s": 0.0,
                     "total_retries": 0,
                 })
@@ -761,7 +763,7 @@ def main():
                 h1_ci = s["chunk_hit1_ci"]
                 h3_ci = s["chunk_hit3_ci"]
                 md_lines.append(
-                    f"| {cs} chars | 18 | {s['n_ans']} | **{s['chunk_hit1_rate']*100:.1f}%** | [{h1_ci[0]*100:.1f}%, {h1_ci[1]*100:.1f}%] | **{s['chunk_hit3_rate']*100:.1f}%** | [{h3_ci[0]*100:.1f}%, {h3_ci[1]*100:.1f}%] | **{s['mrr']:.4f}** | {'Chunk 800 achieves highest chunk-level recall and MRR' if cs==800 else 'Multi-sentence clauses split across boundaries'} |"
+                    f"| {cs} chars | 18 | {s['n_ans']} | **{s['chunk_hit1_rate']*100:.1f}%** | [{h1_ci[0]*100:.1f}%, {h1_ci[1]*100:.1f}%] | **{s['chunk_hit3_rate']*100:.1f}%** | [{h3_ci[0]*100:.1f}%, {h3_ci[1]*100:.1f}%] | **{s['mrr']:.4f}** | {'Highest point estimate; 95% CIs overlap across sizes at n=24 (no superiority claim)' if cs==800 else 'Multi-sentence clauses split across boundaries; CIs overlap at n=24'} |"
                 )
 
     md_lines.append("")
@@ -775,10 +777,13 @@ def main():
             v_ci = s.get("tool_call_valid_ci", (0, 0))
             s_ci = s.get("task_success_ci", (0, 0))
             md_lines.append(
-                f"| `{label}` | Completed | {s['n']} | **{s['tool_call_valid_rate']*100:.1f}%** | [{v_ci[0]*100:.1f}%, {v_ci[1]*100:.1f}%] | **{s['task_success_rate']*100:.1f}%** | [{s_ci[0]*100:.1f}%, {s_ci[1]*100:.1f}%] | {s['mean_latency_s']}s |"
+                f"| `{label}` | Completed | {s['n']} | **{s['tool_call_valid_rate']*100:.1f}%** | [{v_ci[0]*100:.1f}%, {v_ci[1]*100:.1f}%] | **{s['task_success_rate']*100:.1f}%** | [{s_ci[0]*100:.1f}%, {s_ci[1]*100:.1f}%] | {s['mean_latency_s']}s* |"
             )
         else:
             md_lines.append(f"| `{label}` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A |")
+
+    md_lines.append("")
+    md_lines.append("*Note on Latency & Memory Conditions:* Host physical RAM is 7.69 GB (Windows 11). Initial free RAM at benchmark startup measured ~0.62–0.85 GB (requiring `--min-ram 0.1`). In the Oct 16 canonical E2 run, 27.86s was not a clean mean because host memory pressure was elevated (available RAM dipped to 0.11–0.40 GB, warm-up took 11.667s) and 6 items prematurely abstained on turn 1. In the clean Oct 17 run (`posthoc_retrieval_before_abstain`), warm-up cold start dropped to 3.967s, clean mean latency was 40.06s (median 43.09s, std 14.45s), and peak Ollama host RSS was 2,335.4 MB.")
 
     md_lines.append("")
     md_lines.append("## Experiment 3: Prompt Variant (Baseline vs Hardened)")
@@ -801,13 +806,21 @@ def main():
         md_lines.append("")
         md_lines.append("## Post-Hoc Architectural Variant: REQUIRE_RETRIEVAL_BEFORE_ABSTAIN")
         md_lines.append("*Evaluated as a post-hoc intervention forcing one retrieval before accepting Document Assistant abstentions.*")
-        md_lines.append("| Configuration | Status | n | First-Try Validity | 95% CI | Task Success | 95% CI | Mean Latency |")
-        md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+        md_lines.append("| Configuration | Status | n | First-Try Validity | 95% CI | Task Success (Strict) | 95% CI | Task Success (Adjudicated) | 95% CI | Clean Mean Latency | Peak Ollama RSS |")
+        md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
         p_v_ci = posthoc_summary.get("tool_call_valid_ci", (0, 0))
         p_s_ci = posthoc_summary.get("task_success_ci", (0, 0))
+        # Adjudicated: rag_q23 false negative credited (+1)
+        p_adj_pt, p_adj_low, p_adj_high = compute_wilson_ci(41, 45)
         md_lines.append(
-            f"| `POST-HOC: require_retrieval_before_abstain` | Completed | {posthoc_summary['n']} | **{posthoc_summary['tool_call_valid_rate']*100:.1f}%** | [{p_v_ci[0]*100:.1f}%, {p_v_ci[1]*100:.1f}%] | **{posthoc_summary['task_success_rate']*100:.1f}%** | [{p_s_ci[0]*100:.1f}%, {p_s_ci[1]*100:.1f}%] | {posthoc_summary['mean_latency_s']}s |"
+            f"| `POST-HOC: require_retrieval_before_abstain` | Completed | {posthoc_summary['n']} | **{posthoc_summary['tool_call_valid_rate']*100:.1f}%** | [{p_v_ci[0]*100:.1f}%, {p_v_ci[1]*100:.1f}%] | **{posthoc_summary['task_success_rate']*100:.1f}%** | [{p_s_ci[0]*100:.1f}%, {p_s_ci[1]*100:.1f}%] | **{p_adj_pt*100:.1f}%** | [{p_adj_low*100:.1f}%, {p_adj_high*100:.1f}%] | {posthoc_summary['mean_latency_s']}s | {posthoc_summary['peak_ollama_rss_mb']} MB |"
         )
+
+        md_lines.append("\n### Post-Hoc Regressions and Validation Scope")
+        md_lines.append("- **Regressions (b=6 gained, c=2 lost):**")
+        md_lines.append("  1. `rag_q03`: In post-hoc, the model interpreted the absence of an explicit phrase linking 'petitions' directly to the CMO title as a reason to abstain completely rather than citing Dr. K. Radhakrishnan.")
+        md_lines.append("  2. `rag_q21`: In post-hoc, the model relied on generic university priors ('Medical Absence Form', 'Academic Office') instead of conditioning strictly on retrieved text mentioning Form MED-401 and Clause 2.1.")
+        md_lines.append("- **Validation Scope:** Validation of this post-hoc intervention was strictly a unit test (`tests/test_require_retrieval_before_abstain.py`) plus the 45-item evaluation benchmark, not a broad multi-domain regression run.")
 
         # Paired McNemar against canonical run
         if "e2_json_on_retry_on" in all_raw_items:
@@ -824,7 +837,16 @@ def main():
     if e2_failed_items:
         md_lines.append("")
         md_lines.append("## Failure Analysis Breakdown (Canonical Pre-registered Run)")
-        md_lines.append(f"Total failed items: **{len(e2_failed_items)} / 45** (Task Success Rate: **80.0%**)")
+        md_lines.append(f"Total failed items: **{len(e2_failed_items)} / 45**")
+        e2_adj_pt, e2_adj_low, e2_adj_high = compute_wilson_ci(37, 45)
+        md_lines.append(f"- **Strict Task Success Rate:** **80.0%** (36/45) [66.2%, 89.1%]")
+        md_lines.append(f"- **Adjudicated Task Success Rate:** **82.2%** (37/45) [{e2_adj_low*100:.1f}%, {e2_adj_high*100:.1f}%] *(Crediting `rag_q23` scorer false negative)*")
+        md_lines.append("")
+        md_lines.append("### Scorer False Negative Report: `rag_q23`")
+        md_lines.append("- **Question:** *Can undergraduate students take out rare manuscripts from Wing C, and what special badge is needed for on-site inspection?*")
+        md_lines.append("- **Expected Keywords:** `['cannot', 'CLRC-SEC-9']` (match: all)")
+        md_lines.append("- **Model Answer:** *\"Undergraduate students are not allowed to take out rare manuscripts from Wing C. A special badge named CLRC-SEC-9 is needed for on-site inspection of these rare manuscripts.\"*")
+        md_lines.append("- **Adjudication:** The model's answer is factually and semantically correct. It failed the automated keyword matcher solely because the phrasing 'are not allowed to' did not match the literal substring 'cannot'.")
         md_lines.append("")
         md_lines.append("| Item ID | Suite | Question | Expected Keyword / Ground Truth | Model Answer | Failure Cause |")
         md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
@@ -833,6 +855,8 @@ def main():
             ans_short = it.get("answer", "")[:70] + "..."
             kw_gt = str(it.get("expected_keywords") or it.get("ground_truth", ""))
             cause_clean = cause.replace("_", " ").title()
+            if it.get("item_id") == "rag_q23":
+                cause_clean = "Scorer False Negative (Wrong Answer After Retrieval)"
             md_lines.append(f"| `{it['item_id']}` | {it.get('suite')} | {q_short} | `{kw_gt}` | {ans_short} | **{cause_clean}** |")
 
     summary_md_path = RESULTS_DIR / "summary.md"
