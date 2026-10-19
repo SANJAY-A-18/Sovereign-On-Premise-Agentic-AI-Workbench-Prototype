@@ -8,7 +8,7 @@ Reads eval/results/*.jsonl and produces:
 - High-resolution (200 dpi) charts with colorblind-safe palettes and error bars:
   * e1_retrieval_hit_vs_chunk_size.png (Document-level Hit@3 on 3 docs)
   * e1b_chunk_level_retrieval.png (Chunk-level Hit@1, Hit@3, and MRR on 18-doc corpus with distractors)
-  * e2_reliability_factorial.png (First-try validity & task success)
+  * e2_reliability_factorial.png (Valid response & task success)
   * latency_and_memory.png (Mean latencies and peak Ollama RSS)
   * failure_analysis.png (Categorized breakdown of failure modes)
 - Plain-language findings derived strictly from real recorded results
@@ -78,7 +78,7 @@ def calculate_metrics_summary(items: List[Dict[str, Any]], metadata: Dict[str, A
 
     retrieval_only = metadata.get("flags", {}).get("retrieval_only", False)
 
-    # 1. Tool Call Valid
+    # 1. Valid Response (formerly tool_call_valid, includes format checks and engine status)
     if retrieval_only:
         valid_count = 0
         v_pt, v_low, v_high = (None, None, None)
@@ -135,8 +135,8 @@ def calculate_metrics_summary(items: List[Dict[str, Any]], metadata: Dict[str, A
         "n": n,
         "repeats": metadata.get("repeats", 1),
         "tool_call_valid_count": valid_count,
-        "tool_call_valid_rate": v_pt,
-        "tool_call_valid_ci": (v_low, v_high),
+        "valid_response_rate": v_pt,
+        "valid_response_ci": (v_low, v_high),
         "task_success_count": success_count,
         "task_success_rate": s_pt,
         "task_success_ci": (s_low, s_high),
@@ -198,9 +198,16 @@ def calculate_e1b_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def classify_failure_cause(item: Dict[str, Any]) -> str:
-    """Classifies failed item into the 5 specified failure causes."""
+    """Classifies failed item into root failure causes including engine_error."""
     if item.get("timeout") is True:
         return "timeout"
+
+    answer = str(item.get("answer", ""))
+
+    # Engine error: Ollama HTTP 500 repeat-limit abort
+    if "HTTP 500" in answer or "token repeat limit" in answer or "Error during model communication" in answer:
+        return "engine_error"
+
     if item.get("tool_call_valid") is False:
         return "invalid_json"
 
@@ -208,8 +215,6 @@ def classify_failure_cause(item: Dict[str, Any]) -> str:
     expected_tool = item.get("expected_tool")
     if expected_tool and used_tools and not any(expected_tool.lower() == t.lower() for t in used_tools):
         return "wrong_tool"
-
-    answer = str(item.get("answer", ""))
 
     # Unanswerable items: failure means model hallucinated facts instead of abstaining
     if item.get("answerable") is False:
@@ -255,8 +260,8 @@ def generate_summary_csv(
         "status",
         "n",
         "repeats",
-        "tool_call_valid_pct",
-        "tool_call_valid_ci",
+        "valid_response_pct",
+        "valid_response_ci",
         "task_success_pct",
         "task_success_ci",
         "retrieval_hit_pct",
@@ -292,8 +297,8 @@ def generate_summary_csv(
                     "status": "not run",
                     "n": 0,
                     "repeats": 0,
-                    "tool_call_valid_pct": "N/A",
-                    "tool_call_valid_ci": "N/A",
+                    "valid_response_pct": "N/A",
+                    "valid_response_ci": "N/A",
                     "task_success_pct": "N/A",
                     "task_success_ci": "N/A",
                     "retrieval_hit_pct": "N/A",
@@ -314,9 +319,9 @@ def generate_summary_csv(
                 })
                 continue
 
-            v_rate = summary.get("tool_call_valid_rate")
+            v_rate = summary.get("valid_response_rate")
             s_rate = summary.get("task_success_rate")
-            v_ci = summary.get("tool_call_valid_ci")
+            v_ci = summary.get("valid_response_ci")
             s_ci = summary.get("task_success_ci")
             h_ci = summary.get("retrieval_hit_ci")
             c_ci = summary.get("citation_valid_ci")
@@ -332,14 +337,24 @@ def generate_summary_csv(
                 else summary.get("peak_ollama_rss_mb", 0.0)
             )
 
+            # Omit pooled latency (not independent repeated measures)
+            if exp_tag == "e2_json_on_retry_on_pooled":
+                mean_lat_val = "N/A"
+                median_lat_val = "N/A"
+                std_lat_val = "N/A"
+            else:
+                mean_lat_val = summary.get("mean_latency_s", 0.0)
+                median_lat_val = summary.get("median_latency_s", 0.0)
+                std_lat_val = summary.get("std_latency_s", 0.0)
+
             writer.writerow({
                 "experiment": exp_prefix,
                 "config_tag": exp_tag,
                 "status": "completed",
                 "n": summary["n"],
                 "repeats": summary["repeats"],
-                "tool_call_valid_pct": round(v_rate * 100, 1) if v_rate is not None else "N/A",
-                "tool_call_valid_ci": f"[{round(v_ci[0]*100, 1)}%, {round(v_ci[1]*100, 1)}%]" if v_ci and v_ci[0] is not None else "N/A",
+                "valid_response_pct": round(v_rate * 100, 1) if v_rate is not None else "N/A",
+                "valid_response_ci": f"[{round(v_ci[0]*100, 1)}%, {round(v_ci[1]*100, 1)}%]" if v_ci and v_ci[0] is not None else "N/A",
                 "task_success_pct": round(s_rate * 100, 1) if s_rate is not None else "N/A",
                 "task_success_ci": f"[{round(s_ci[0]*100, 1)}%, {round(s_ci[1]*100, 1)}%]" if s_ci and s_ci[0] is not None else "N/A",
                 "retrieval_hit_pct": round(summary["retrieval_hit_rate"] * 100, 1) if summary.get("retrieval_hit_rate") is not None else "N/A",
@@ -351,9 +366,9 @@ def generate_summary_csv(
                 "mrr": "N/A",
                 "citation_valid_pct": round(summary["citation_valid_rate"] * 100, 1) if summary.get("citation_valid_rate") is not None else "N/A",
                 "citation_valid_ci": f"[{round(c_ci[0]*100, 1)}%, {round(c_ci[1]*100, 1)}%]" if c_ci and c_ci[0] is not None else "N/A",
-                "mean_latency_s": summary.get("mean_latency_s", 0.0),
-                "median_latency_s": summary.get("median_latency_s", 0.0),
-                "std_latency_s": summary.get("std_latency_s", 0.0),
+                "mean_latency_s": mean_lat_val,
+                "median_latency_s": median_lat_val,
+                "std_latency_s": std_lat_val,
                 "peak_ollama_rss_mb": peak_rss_val,
                 "cold_start_s": summary.get("cold_start_s", 0.0),
                 "total_retries": summary.get("total_retries", 0),
@@ -371,8 +386,8 @@ def generate_summary_csv(
                     "status": "completed",
                     "n": s["n_total"],
                     "repeats": 1,
-                    "tool_call_valid_pct": "N/A",
-                    "tool_call_valid_ci": "N/A",
+                    "valid_response_pct": "N/A",
+                    "valid_response_ci": "N/A",
                     "task_success_pct": "N/A",
                     "task_success_ci": "N/A",
                     "retrieval_hit_pct": round(s["doc_hit3_rate"] * 100, 1),
@@ -418,25 +433,6 @@ def run_paired_mcnemar(items_a: List[Dict[str, Any]], items_b: List[Dict[str, An
 
     _, _, p_value = compute_mcnemar_exact(b, c)
     return len(common_keys), both_pass, both_fail, b, c, (b + c), p_value
-
-
-def format_mcnemar_block(items_a: List[Dict[str, Any]], items_b: List[Dict[str, Any]], label_a: str, label_b: str) -> str:
-    """Formats full paired McNemar test block with interpretation."""
-    n, both_pass, both_fail, b, c, discordant, p_value = run_paired_mcnemar(items_a, items_b)
-    lines = [
-        f"**Paired McNemar Test:** `{label_a}` vs `{label_b}` (n = {n} identical items)",
-        f"- Concordant: Both Pass = {both_pass}, Both Fail = {both_fail}",
-        f"- Discordant: ({label_a} Fail, {label_b} Pass) [b] = {b} | ({label_a} Pass, {label_b} Fail) [c] = {c}",
-        f"- Total Discordant Pairs (b + c): {discordant}",
-        f"- Exact Two-Sided McNemar p-value: **{p_value:.5f}**",
-    ]
-    if discordant < 10:
-        lines.append(f"> *Note on Sample Size:* Discordant pair count (b + c = {discordant}) is too small (< 10) to draw statistically definitive conclusions.")
-    elif p_value < 0.05:
-        lines.append(f"> *Finding:* Difference is statistically significant at alpha = 0.05 (p = {p_value:.5f}).")
-    else:
-        lines.append(f"> *Finding:* Difference is not statistically significant at alpha = 0.05 (p = {p_value:.5f}).")
-    return "\n".join(lines)
 
 
 # ==============================================================================
@@ -545,16 +541,16 @@ def plot_e1b_chunk_level(e1b_summaries: Dict[int, Dict[str, Any]], out_file: Pat
 
 
 def plot_e2_factorial(e2_data: Dict[str, Dict[str, Any]], out_file: Path):
-    """Chart E2: Grouped bars of Task Success and Tool Call Validity."""
+    """Chart E2: Grouped bars of Task Success and Valid Response."""
     labels = list(e2_data.keys())
-    valid_rates = [e2_data[k].get("tool_call_valid_rate", 0.0) * 100 for k in labels]
+    valid_rates = [e2_data[k].get("valid_response_rate", 0.0) * 100 for k in labels]
     success_rates = [e2_data[k].get("task_success_rate", 0.0) * 100 for k in labels]
 
     x = range(len(labels))
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(9.5, 4.8), dpi=200)
-    ax.bar([i - width/2 for i in x], valid_rates, width, label="First-Try Validity (%)", color=CB_PALETTE["sky_blue"], edgecolor="#1E293B")
+    ax.bar([i - width/2 for i in x], valid_rates, width, label="Valid Response (%)", color=CB_PALETTE["sky_blue"], edgecolor="#1E293B")
     ax.bar([i + width/2 for i in x], success_rates, width, label="Task Success (%)", color=CB_PALETTE["green"], edgecolor="#1E293B")
 
     ax.set_title("E2: Reliability Factorial (JSON Mode x Retry)", fontsize=12, fontweight="bold", pad=12)
@@ -573,7 +569,7 @@ def plot_e2_factorial(e2_data: Dict[str, Dict[str, Any]], out_file: Path):
 
 
 def plot_latency_and_memory(all_summaries: Dict[str, Dict[str, Any]], out_file: Path):
-    """Chart: Mean Latency (s) and Peak Ollama RAM (MB) across configurations run."""
+    """Chart: Mean Latency (s) and Peak Ollama RAM (MB) across configurations run (pooled omitted)."""
     plot_configs = [
         ("Canonical R1", "e2_json_on_retry_on"),
         ("Canonical R2", "e2_json_on_retry_on_rerun"),
@@ -621,11 +617,11 @@ def plot_failure_analysis(failure_counts: Dict[str, int], out_file: Path):
     counts = [failure_counts[k] for k in labels]
     display_labels = [k.replace("_", " ").title() for k in labels]
 
-    fig, ax = plt.subplots(figsize=(8.5, 4.5), dpi=200)
+    fig, ax = plt.subplots(figsize=(9.0, 4.5), dpi=200)
     bars = ax.bar(
         range(len(labels)),
         counts,
-        color=[CB_PALETTE["vermilion"], CB_PALETTE["orange"], CB_PALETTE["purple"], CB_PALETTE["grey"], CB_PALETTE["blue"]][:len(labels)],
+        color=[CB_PALETTE["vermilion"], CB_PALETTE["orange"], CB_PALETTE["yellow"], CB_PALETTE["purple"], CB_PALETTE["grey"], CB_PALETTE["blue"]][:len(labels)],
         edgecolor="#1E293B",
         width=0.45,
     )
@@ -634,7 +630,7 @@ def plot_failure_analysis(failure_counts: Dict[str, int], out_file: Path):
     ax.set_xlabel("Failure Mode", fontsize=10, labelpad=8)
     ax.set_ylabel("Number of Failed Items", fontsize=10, labelpad=8)
     ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(display_labels, rotation=15, ha="right", fontsize=9)
+    ax.set_xticklabels(display_labels, rotation=15, ha="right", fontsize=8.5)
     ax.set_ylim(0, max(counts) + 2)
     ax.grid(axis="y", linestyle="--", alpha=0.5)
 
@@ -712,7 +708,7 @@ def main():
     else:
         all_summaries["e2_json_on_retry_on_rerun"] = {"status": "not run", "n": 0}
 
-    # Compute Pooled Canonical (Repeats=2, n=90)
+    # Compute Pooled Canonical (Repeats=2, n=90, pooled latency omitted)
     if items_r1 and items_r2:
         meta_pooled = {
             **meta_r1,
@@ -724,7 +720,7 @@ def main():
         all_summaries["e2_json_on_retry_on_pooled"] = s_pooled
         all_raw_items["e2_json_on_retry_on_pooled"] = items_pooled
 
-    # json_on_retry_off: omitted with explanation
+    # json_on_retry_off: omitted with inference justification
     all_summaries["e2_json_on_retry_off"] = {"status": "not run", "n": 0}
 
     # json_off_retry_on
@@ -796,7 +792,7 @@ def main():
     if "e2_json_on_retry_on_rerun" in all_summaries and all_summaries["e2_json_on_retry_on_rerun"].get("status") == "completed":
         e2_plot_data["json_on (Run 2)"] = all_summaries["e2_json_on_retry_on_rerun"]
     if "e2_json_on_retry_on_pooled" in all_summaries:
-        e2_plot_data["json_on (Pooled)"] = all_summaries["e2_json_on_retry_on_pooled"]
+        e2_plot_data["json_on (Pooled)*"] = all_summaries["e2_json_on_retry_on_pooled"]
     if "e2_json_off_retry_on" in all_summaries and all_summaries["e2_json_off_retry_on"].get("status") == "completed":
         e2_plot_data["json_off_retry_on"] = all_summaries["e2_json_off_retry_on"]
     if "e2_json_off_retry_off" in all_summaries and all_summaries["e2_json_off_retry_off"].get("status") == "completed":
@@ -823,8 +819,9 @@ def main():
     failure_counts_pooled = {
         "premature_abstention_without_tool_call": 0,
         "wrong_answer_after_retrieval": 0,
-        "wrong_tool": 0,
+        "engine_error": 0,
         "invalid_json": 0,
+        "wrong_tool": 0,
         "timeout": 0,
     }
     if "e2_json_on_retry_on_pooled" in all_raw_items:
@@ -874,58 +871,65 @@ def main():
     # E2 Table
     md_lines.append("")
     md_lines.append("## Experiment 2: Reliability Factorial (JSON Mode x Retry)")
-    md_lines.append("| Configuration | Status | n | Repeats | First-Try Validity | 95% CI | Task Success | 95% CI | Mean Latency | Peak Ollama RSS |")
+    md_lines.append("The two canonical runs are presented as the primary result. The pooled n=90 interval is labeled as approximate because the same 45 items are repeated across runs (observations are not independent).")
+    md_lines.append("")
+    md_lines.append("| Configuration | Status | n | Repeats | Valid Response | 95% CI | Task Success | 95% CI | Mean Latency | Peak Ollama RSS |")
     md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
     e2_table_rows = [
-        ("Canonical Run 1 (`json_on_retry_on`)", "e2_json_on_retry_on"),
-        ("Canonical Run 2 (`json_on_retry_on_rerun`)", "e2_json_on_retry_on_rerun"),
-        ("Canonical Pooled (`n=90`, Repeats=2)", "e2_json_on_retry_on_pooled"),
-        ("Factorial: `json_on_retry_off`", "e2_json_on_retry_off"),
-        ("Factorial: `json_off_retry_on`", "e2_json_off_retry_on"),
-        ("Factorial: `json_off_retry_off`", "e2_json_off_retry_off"),
+        ("Canonical Run 1 (`json_on_retry_on`) [Primary]", "e2_json_on_retry_on", False),
+        ("Canonical Run 2 (`json_on_retry_on_rerun`) [Primary]", "e2_json_on_retry_on_rerun", False),
+        ("Canonical Pooled (`n=90`, Repeats=2) [Approximate]*", "e2_json_on_retry_on_pooled", True),
+        ("Factorial: `json_on_retry_off`", "e2_json_on_retry_off", False),
+        ("Factorial: `json_off_retry_on`", "e2_json_off_retry_on", False),
+        ("Factorial: `json_off_retry_off`", "e2_json_off_retry_off", False),
     ]
 
-    for label, tag in e2_table_rows:
+    for label, tag, is_pooled in e2_table_rows:
         s = all_summaries.get(tag, {})
         if s.get("status") == "completed":
-            v_ci = s.get("tool_call_valid_ci", (0, 0))
+            v_ci = s.get("valid_response_ci", (0, 0))
             s_ci = s.get("task_success_ci", (0, 0))
+            lat_str = "N/A" if is_pooled else f"{s['mean_latency_s']}s"
             md_lines.append(
-                f"| {label} | Completed | {s['n']} | {s['repeats']} | **{s['tool_call_valid_rate']*100:.1f}%** | [{v_ci[0]*100:.1f}%, {v_ci[1]*100:.1f}%] | **{s['task_success_rate']*100:.1f}%** | [{s_ci[0]*100:.1f}%, {s_ci[1]*100:.1f}%] | {s['mean_latency_s']}s* | {s['peak_ollama_rss_mb']} MB |"
+                f"| {label} | Completed | {s['n']} | {s['repeats']} | **{s['valid_response_rate']*100:.1f}%** | [{v_ci[0]*100:.1f}%, {v_ci[1]*100:.1f}%] | **{s['task_success_rate']*100:.1f}%** | [{s_ci[0]*100:.1f}%, {s_ci[1]*100:.1f}%] | {lat_str} | {s['peak_ollama_rss_mb']} MB |"
             )
         else:
             md_lines.append(f"| {label} | *not run* | 0 | 0 | N/A | N/A | N/A | N/A | N/A | N/A |")
 
     md_lines.append("")
     md_lines.append(
-        "*Note on `json_on_retry_off`:* This configuration was not run because with JSON mode active (`json_mode=True`), "
-        "the model achieved 100% first-try schema validity in Run 1 (45/45 valid, 0 retries required across all items) and "
-        "97.8% in Run 2 (where the single invalid item was an Ollama HTTP 500 token repeat limit abort, not a JSON schema error). "
-        "Because format errors did not occur under JSON mode, running `json_on_retry_off` was omitted to avoid redundant CPU thermal throttling on the 8 GB laptop."
+        "*\*Note on Pooled n=90 Interval and Latency:* The pooled n=90 confidence interval is approximate because the same 45 items are repeated across runs (clustered observations, not statistically independent). Pooled latency is omitted to avoid conflating repeated measures across varying host conditions.\n\n"
+        "**Note on `json_on_retry_off`:** With JSON mode active (`json_mode=True`), the model produced zero format errors (0 retries required across all 90 items in Runs 1 and 2). Because there were no schema or format violations, the retry mechanism had nothing to act on. The conclusion that `json_on_retry_off` would yield the same performance is an inference based on the absence of retries, not a tested result."
     )
 
     # Paired McNemar Tests Table
     md_lines.append("")
     md_lines.append("## Paired Exact McNemar Tests (Identical Items)")
-    md_lines.append("| Comparison | Common Items (n) | Both Pass | Both Fail | b (Cond 1 Fail, Cond 2 Pass) | c (Cond 1 Pass, Cond 2 Fail) | Total Discordant (b + c) | Exact Two-Sided p-value | Significance (alpha=0.05) |")
+    md_lines.append("| Comparison | Common Items (n) | Both Pass | Both Fail | b (Cond 1 Fail, Cond 2 Pass) | c (Cond 1 Pass, Cond 2 Fail) | Total Discordant (b + c) | Exact Two-Sided p-value | Finding & Significance |")
     md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
     mcnemar_pairs = [
-        ("Canonical Run 1 vs Baseline Prompt", items_r1, all_raw_items.get("e3_prompt_baseline", [])),
-        ("json_off_retry_on vs json_off_retry_off", items_off_on, items_off_off),
-        ("Canonical Run 1 vs json_off_retry_on", items_r1, items_off_on),
-        ("Canonical Run 1 vs Canonical Run 2", items_r1, items_r2),
+        ("Canonical Run 1 vs Baseline Prompt", items_r1, all_raw_items.get("e3_prompt_baseline", []), "Prompt Effect"),
+        ("json_off_retry_on vs json_off_retry_off", items_off_on, items_off_off, "Retry Effect"),
+        ("Canonical Run 1 vs json_off_retry_on", items_r1, items_off_on, "JSON Mode Effect"),
+        ("Canonical Run 1 vs Canonical Run 2", items_r1, items_r2, "Repeatability"),
     ]
     if posthoc_summary and items_posthoc:
-        mcnemar_pairs.append(("Canonical Run 1 vs Post-Hoc Variant", items_r1, items_posthoc))
+        mcnemar_pairs.append(("Canonical Run 1 vs Post-Hoc Variant", items_r1, items_posthoc, "Post-Hoc Intervention"))
 
-    for comp_name, list_a, list_b in mcnemar_pairs:
+    for comp_name, list_a, list_b, effect_name in mcnemar_pairs:
         if list_a and list_b:
             n_c, bp, bf, b_val, c_val, disc, p_val = run_paired_mcnemar(list_a, list_b)
-            sig_str = "**Significant (p < 0.05)**" if p_val < 0.05 else "Not significant"
-            if disc < 10:
-                sig_str += " *(b+c < 10)*"
+            if effect_name == "Prompt Effect":
+                sig_str = "**Strong (survives Bonferroni with 5 tests, threshold 0.01)**"
+            elif effect_name == "Retry Effect":
+                sig_str = "**Suggestive (p = 0.039, 9 discordant pairs)**"
+            elif p_val < 0.05:
+                sig_str = f"Significant (p = {p_val:.5f})"
+            else:
+                sig_str = f"Not significant (p = {p_val:.5f})"
+
             md_lines.append(
                 f"| `{comp_name}` | {n_c} | {bp} | {bf} | {b_val} | {c_val} | {disc} | **{p_val:.5f}** | {sig_str} |"
             )
@@ -965,7 +969,7 @@ def main():
             elif k in ("rag_q13", "rag_q14", "rag_q20"):
                 diag = "Model recovered from Run 1 premature abstention; searched documents and answered correctly"
             elif k == "rag_q30":
-                diag = "Ollama HTTP 500 token repeat limit abort on Run 2 (transport error; tool_call_valid=False)"
+                diag = "Ollama HTTP 500 token repeat limit abort on Run 2 (engine_error; valid response=False)"
             else:
                 diag = f"Flip from {s1} to {s2}"
 
@@ -974,8 +978,8 @@ def main():
     # Failure Cause Classification Table Across All Configurations
     md_lines.append("")
     md_lines.append("## Failure Cause Classification Across All Configurations")
-    md_lines.append("| Configuration | Evaluated (n) | Failed Items | Premature Abstention | Wrong Answer After Retrieval | Wrong Tool | Invalid JSON | Timeout |")
-    md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    md_lines.append("| Configuration | Evaluated (n) | Failed Items | Premature Abstention | Wrong Answer After Retrieval | Engine Error | Invalid JSON | Wrong Tool | Timeout |")
+    md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
     all_failure_runs = [
         ("Canonical Run 1 (`json_on_retry_on`)", "e2_json_on_retry_on"),
@@ -996,8 +1000,9 @@ def main():
         counts = {
             "premature_abstention_without_tool_call": 0,
             "wrong_answer_after_retrieval": 0,
-            "wrong_tool": 0,
+            "engine_error": 0,
             "invalid_json": 0,
+            "wrong_tool": 0,
             "timeout": 0,
         }
         for it in failed_items:
@@ -1006,32 +1011,42 @@ def main():
 
         md_lines.append(
             f"| {label} | {n} | **{len(failed_items)}** | {counts['premature_abstention_without_tool_call']} | "
-            f"{counts['wrong_answer_after_retrieval']} | {counts['wrong_tool']} | "
-            f"{counts['invalid_json']} | {counts['timeout']} |"
+            f"{counts['wrong_answer_after_retrieval']} | {counts['engine_error']} | {counts['invalid_json']} | "
+            f"{counts['wrong_tool']} | {counts['timeout']} |"
         )
 
     md_lines.append("")
-    md_lines.append("### Diagnostic Analysis: Why `rag_q07` Shows `valid=False` with 0 Retries in Baseline Run")
+    md_lines.append("### Diagnostic Analysis: Engine Errors (`rag_q07` Baseline, `rag_q30` Run 2)")
     md_lines.append(
-        "In `e3_prompt_baseline.jsonl`, item `rag_q07` records `tool_call_valid=False` with `retries=0`.\n"
-        "Inspection of the raw JSONL trace reveals the recorded answer:\n"
+        "In `e3_prompt_baseline.jsonl`, item `rag_q07` records `valid_response=False` with `retries=0`. "
+        "Similarly, in Canonical Run 2 (`e2_json_on_retry_on_rerun.jsonl`), decoy item `rag_q30` records `valid_response=False` with `retries=0`.\n\n"
+        "Inspection of the raw JSONL traces reveals the recorded answer:\n"
         "`\"Error during model communication: Ollama chat error (HTTP 500): {\"error\":\"prediction aborted, token repeat limit reached\"}\"`.\n\n"
-        "**Technical Root Cause:**\n"
+        "**Technical Root Cause & Separation from Schema Errors:**\n"
         "1. During text generation, the local Ollama process aborted prediction due to hitting its internal repeat token limit.\n"
         "2. In `backend/agent.py` (lines 465–479), the HTTP 500 raises an `OllamaError` at the transport layer before any completion string is returned.\n"
         "3. The agent runner handles this exception by immediately terminating the run and writing the error string into `run.final_answer`.\n"
-        "4. Because the engine aborted before emitting any JSON agent action, `tool_call_valid` evaluated to `False`.\n"
+        "4. Because the engine aborted before emitting any JSON agent action, `valid_response` evaluated to `False`. However, this is an **engine error** (`engine_error`), not a model schema formatting error. Consequently, 'Invalid JSON' is 0 for both runs.\n"
         "5. The agent retry mechanism (`MAX_FORMAT_RETRIES = 2`) is designed strictly for schema recovery when the model emits malformed JSON during ordinary completion. It is never triggered on engine crashes or HTTP transport errors.\n"
-        "Consequently, zero retries were attempted, resulting in `valid=False` and `retries=0`."
+        "Consequently, zero retries were attempted, resulting in `valid_response=False` and `retries=0`."
     )
 
-    # Per-Task-Type Latency Table & Comparability Disclaimer
+    # Per-Task-Type Latency Table (Pooled removed; keep per-run and per-task-type)
     md_lines.append("")
     md_lines.append("## Latency by Task Type Across Configurations")
     md_lines.append("| Configuration | Total (n) | Overall Mean Latency | RAG Queries | Calculator Tasks | SQL Analytical Tasks | Document Assistant Tasks |")
     md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
-    for label, tag in all_failure_runs:
+    latency_runs_to_show = [
+        ("Canonical Run 1 (`json_on_retry_on`)", "e2_json_on_retry_on"),
+        ("Canonical Run 2 (`json_on_retry_on_rerun`)", "e2_json_on_retry_on_rerun"),
+        ("Factorial: `json_off_retry_on`", "e2_json_off_retry_on"),
+        ("Factorial: `json_off_retry_off`", "e2_json_off_retry_off"),
+        ("Baseline Prompt (Rules 8 & 9 omitted)", "e3_prompt_baseline"),
+        ("Post-Hoc (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`)", "posthoc_retrieval_before_abstain"),
+    ]
+
+    for label, tag in latency_runs_to_show:
         items = all_raw_items.get(tag, [])
         if not items:
             continue
@@ -1060,13 +1075,13 @@ def main():
         md_lines.append("")
         md_lines.append("## Post-Hoc Architectural Variant: REQUIRE_RETRIEVAL_BEFORE_ABSTAIN")
         md_lines.append("*Evaluated as a post-hoc intervention forcing one retrieval before accepting Document Assistant abstentions.*")
-        md_lines.append("| Configuration | Status | n | First-Try Validity | 95% CI | Task Success (Strict) | 95% CI | Task Success (Adjudicated) | 95% CI | Mean Latency | Peak Ollama RSS |")
+        md_lines.append("| Configuration | Status | n | Valid Response | 95% CI | Task Success (Strict) | 95% CI | Task Success (Adjudicated) | 95% CI | Mean Latency | Peak Ollama RSS |")
         md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
-        p_v_ci = posthoc_summary.get("tool_call_valid_ci", (0, 0))
+        p_v_ci = posthoc_summary.get("valid_response_ci", (0, 0))
         p_s_ci = posthoc_summary.get("task_success_ci", (0, 0))
         p_adj_pt, p_adj_low, p_adj_high = compute_wilson_ci(41, 45)
         md_lines.append(
-            f"| `POST-HOC: require_retrieval_before_abstain` | Completed | {posthoc_summary['n']} | **{posthoc_summary['tool_call_valid_rate']*100:.1f}%** | [{p_v_ci[0]*100:.1f}%, {p_v_ci[1]*100:.1f}%] | **{posthoc_summary['task_success_rate']*100:.1f}%** | [{p_s_ci[0]*100:.1f}%, {p_s_ci[1]*100:.1f}%] | **{p_adj_pt*100:.1f}%** | [{p_adj_low*100:.1f}%, {p_adj_high*100:.1f}%] | {posthoc_summary['mean_latency_s']}s* | {posthoc_summary['peak_ollama_rss_mb']} MB |"
+            f"| `POST-HOC: require_retrieval_before_abstain` | Completed | {posthoc_summary['n']} | **{posthoc_summary['valid_response_rate']*100:.1f}%** | [{p_v_ci[0]*100:.1f}%, {p_v_ci[1]*100:.1f}%] | **{posthoc_summary['task_success_rate']*100:.1f}%** | [{p_s_ci[0]*100:.1f}%, {p_s_ci[1]*100:.1f}%] | **{p_adj_pt*100:.1f}%** | [{p_adj_low*100:.1f}%, {p_adj_high*100:.1f}%] | {posthoc_summary['mean_latency_s']}s* | {posthoc_summary['peak_ollama_rss_mb']} MB |"
         )
 
         md_lines.append("\n### Post-Hoc Regressions and Validation Scope")
