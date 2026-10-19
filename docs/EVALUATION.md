@@ -145,29 +145,73 @@ Because of this statistical overlap, **no claim of statistical superiority can b
 ### 5.3 Experiment 2: Reliability Factorial (JSON Mode x Retry)
 Evaluated on `qwen2.5:3b`.
 
-| Configuration | Status | $n$ | First-Try Validity | 95% Wilson CI | Task Success (Strict) | 95% Wilson CI | Task Success (Adjudicated) | 95% Wilson CI | Latency Note | Peak Ollama RSS |
+| Configuration | Status | $n$ | Repeats | First-Try Validity | 95% Wilson CI | Task Success (Strict) | 95% Wilson CI | Mean Latency | Peak Ollama RSS | Retries |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| `json_on_retry_on` | Completed | 45 | **100.0%** (45/45) | [92.1%, 100.0%] | **80.0%** (36/45) | [66.2%, 89.1%] | **82.2%** (37/45) | [68.7%, 90.7%] | 27.86s* *(pressured)* | 2,351.3 MB |
-| `json_on_retry_off` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| `json_off_retry_on` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| `json_off_retry_off`| *not run* | 0 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| **Canonical Run 1** (`json_on_retry_on`) | Completed | 45 | 1 | **100.0%** (45/45) | [92.1%, 100.0%] | **80.0%** (36/45) | [66.2%, 89.1%] | 27.86s* | 2,351.3 MB | 0 |
+| **Canonical Run 2** (`json_on_retry_on_rerun`) | Completed | 45 | 1 | **97.8%** (44/45) | [88.4%, 99.6%] | **80.0%** (36/45) | [66.2%, 89.1%] | 55.39s* | 2,205.5 MB | 0 |
+| **Canonical Pooled** (Runs 1 & 2) | Completed | 90 | 2 | **98.9%** (89/90) | [94.0%, 99.8%] | **80.0%** (72/90) | [70.6%, 87.0%] | 41.62s* | 2,351.3 MB | 0 |
+| `json_on_retry_off` | *not run* | 0 | 0 | N/A | N/A | N/A | N/A | N/A | N/A | 0 |
+| `json_off_retry_on` | Completed | 45 | 1 | **93.3%** (42/45) | [82.1%, 97.7%] | **82.2%** (37/45) | [68.7%, 90.7%] | 23.53s* | 2,344.1 MB | 8 |
+| `json_off_retry_off` | Completed | 45 | 1 | **88.9%** (40/45) | [76.5%, 95.2%] | **66.7%** (30/45) | [52.1%, 78.6%] | 19.25s* | 2,363.0 MB | 0 |
 
-*\*\*Note on Latency & Memory Conditions:* All latency and RAM numbers were measured at ~0.8 GB free RAM on an 8 GB host with the IDE open; memory-constrained. Note that 40.06s is the post-hoc variant (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`), not the canonical configuration. The canonical configuration (27.86s) and post-hoc variant (40.06s) runs are not directly comparable because host memory load was not controlled between the runs. Regarding the 27.86s mean in the canonical run, it is hypothesized (not an empirical finding) that 6 premature 1-turn abstentions without tool calling reduced the average duration, while intermittent OS memory paging during multi-turn items introduced latency stalls. In the post-hoc run, warm-up cold start was 3.967s, mean latency per item was **40.06s** (median 43.09s, std 14.45s), and peak Ollama host RSS was **2,335.4 MB**.
+*\*Note on Latency & Memory Conditions:* All latency and RAM numbers were measured at ~0.8 GB free RAM on an 8 GB host with the IDE open; memory-constrained. Note that 40.06s is the post-hoc variant (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`), not the canonical configuration. The canonical configuration (27.86s in Run 1, 55.39s in Run 2, 41.62s pooled) and post-hoc variant (40.06s) runs are not directly comparable because host memory load and paging were not controlled between test sessions.
 
-*Reason for unrun configurations:* On an 8 GB laptop with ~0.4 GB available host memory during factorial planning, running the full 4-cell factorial across 3 repeats (540 total inference calls, estimated >6 hours of continuous CPU execution) would induce severe thermal throttling and system instability. `json_on_retry_on` was fully verified with $n=45$ real items. Because zero JSON format errors occurred when JSON mode was ON (first-try validity = 100%, 0 retries required across all 45 items), format errors did not occur with JSON mode enabled.
+**Reason why `json_on_retry_off` was NOT run:**
+With JSON mode active (`json_mode=True`), the model achieved 100% first-try schema validity in Run 1 (45/45 valid, 0 retries required across all items) and 97.8% in Run 2 (where the single invalid item was an Ollama HTTP 500 token repeat limit abort, not a JSON schema error). Because format errors did not occur under JSON mode, running `json_on_retry_off` was omitted to avoid redundant CPU thermal throttling on the 8 GB laptop.
+
+#### Paired Exact McNemar Tests for Experiment 2 (Identical Items):
+1. **`json_off_retry_on` vs `json_off_retry_off` ($n = 45$ identical items):**
+   - Concordant: Both Pass = 29, Both Fail = 7
+   - Discordant: (`json_off_retry_on` Fail, `json_off_retry_off` Pass) [$b$] = **1** | (`json_off_retry_on` Pass, `json_off_retry_off` Fail) [$c$] = **8**
+   - Total Discordant Pairs ($b + c$): **9**
+   - Exact Two-Sided McNemar p-value: **0.03906**
+   - **Finding:** Statistically significant difference at $\alpha = 0.05$ ($p = 0.03906 < 0.05$). Retries significantly recover schema violations and improve task completion when JSON mode is disabled.
+2. **Canonical Run 1 vs `json_off_retry_on` ($n = 45$ identical items):**
+   - Concordant: Both Pass = 35, Both Fail = 7
+   - Discordant: (Canonical Fail, `json_off_retry_on` Pass) [$b$] = **2** | (Canonical Pass, `json_off_retry_on` Fail) [$c$] = **1**
+   - Total Discordant Pairs ($b + c$): **3**
+   - Exact Two-Sided McNemar p-value: **1.00000**
+   - **Finding:** Difference is not statistically significant ($\alpha = 0.05$).
+3. **Canonical Run 1 vs Canonical Run 2 ($n = 45$ identical items):**
+   - Concordant: Both Pass = 33, Both Fail = 6
+   - Discordant: (Run 1 Fail, Run 2 Pass) [$b$] = **3** | (Run 1 Pass, Run 2 Fail) [$c$] = **3**
+   - Total Discordant Pairs ($b + c$): **6**
+   - Exact Two-Sided McNemar p-value: **1.00000**
+   - **Finding:** Difference is not statistically significant ($\alpha = 0.05$). Aggregate task success is identical (80.0% vs 80.0%).
+
+#### Item-Level Flip Table: Canonical Run 1 vs Run 2
+Across the 45 identical items, exactly **6 items flipped** between Run 1 and Run 2 ($13.3\%$; Run 1 Pass $\rightarrow$ Run 2 Fail: 3; Run 1 Fail $\rightarrow$ Run 2 Pass: 3; exact McNemar $p = 1.00000$):
+
+| Item ID | Suite | Question | Expected Keyword / Ground Truth | Run 1 Outcome | Run 1 Response Summary | Run 2 Outcome | Run 2 Response Summary | Flip Diagnosis |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `rag_q09` | rag | Morning biometric scan window hours at Kiosk-7 | `['08:15', '08:35']` | **PASS** | Answered 08:15 AM to 08:35 AM | **FAIL** | "The provided documents do not contain this information." | Stochastic premature abstention without tool call on Run 2 |
+| `rag_q11` | rag | Authorized Controller of Examinations | `['Deshmukh']` | **PASS** | Answered Dr. Hemant V. Deshmukh | **FAIL** | "The provided documents do not contain this information." | Stochastic premature abstention without tool call on Run 2 |
+| `rag_q13` | rag | Minimum passing percentage for theory paper | `['42', 'percent']` | **FAIL** | "The provided documents do not contain this information." | **PASS** | Retrieved exam rules; answered 42% | Model recovered from Run 1 premature abstention; searched documents and answered correctly |
+| `rag_q14` | rag | Registration fee per theoretical credit | `['1,150', '1150']` | **FAIL** | "I do not know." | **PASS** | Retrieved exam rules; answered Rs 1,150 | Model recovered from Run 1 premature abstention; searched documents and answered correctly |
+| `rag_q20` | rag | Daily session cap on Cyber Commons workstations | `['90', 'minutes']` | **FAIL** | "The provided documents do not contain this information." | **PASS** | Retrieved library rules; answered 90 minutes | Model recovered from Run 1 premature abstention; searched documents and answered correctly |
+| `rag_q30` | rag | Private group study room reservation fee *(Decoy)* | `['do not know', ...]` | **PASS** | "I do not know." | **FAIL** | Error: Ollama chat error (HTTP 500 repeat limit) | Ollama HTTP 500 token repeat limit abort on Run 2 (transport error; `tool_call_valid=False`) |
+
+---
 
 ### 5.4 Experiment 3: Prompt Variant (Hardened vs Baseline)
 - **Hardened (Default):** Includes Rules 8 and 9 explicitly forcing immediate invocation of `read_sql` and `search_documents`.
 - **Baseline:** Omits Rules 8 and 9.
 
-| Variant | Status | $n$ | First-Try Validity | Task Success (Strict) | Task Success (Adjudicated) | Citation Validity |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Hardened** (Rules 8 & 9) | Completed | 45 | **100.0%** (45/45) | **80.0%** (36/45) | **82.2%** (37/45) | **100.0%** (45/45) |
-| **Baseline** (Rules 8 & 9 omitted) | *not run* | 0 | N/A | N/A | N/A | N/A |
+| Variant | Status | $n$ | First-Try Validity | 95% Wilson CI | Task Success (Strict) | 95% Wilson CI | Mean Latency | Peak Ollama RSS |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Hardened** (Rules 8 & 9) | Completed | 45 | **100.0%** (45/45) | [92.1%, 100.0%] | **80.0%** (36/45) | [66.2%, 89.1%] | 27.86s* | 2,351.3 MB |
+| **Baseline** (Rules 8 & 9 omitted) | Completed | 45 | **97.8%** (44/45) | [88.4%, 99.6%] | **55.6%** (25/45) | [41.2%, 69.1%] | 16.17s* | 2,402.2 MB |
 
 *Note:* In `summary.csv`, the redundant duplicate row for `e3_prompt_hardened` has been removed to avoid double-counting the identical configuration from E2.
 
-*Reason for unrun baseline:* Preserved machine health and prioritized full verification of the primary hardened configuration within the execution session.
+#### Paired Exact McNemar Test (Canonical Run 1 vs Baseline Prompt, $n = 45$ identical items):
+- **Concordant Pairs:** Both Pass = 23, Both Fail = 7
+- **Discordant Pairs:**
+  - (Canonical Fail, Baseline Pass) [$b$]: **2 items** (`rag_q03`, `rag_q21`)
+  - (Canonical Pass, Baseline Fail) [$c$]: **13 items** (`rag_q01`, `rag_q02`, `rag_q04`, `rag_q06`, `rag_q07`, `rag_q09`, `rag_q10`, `rag_q11`, `rag_q16`, `rag_q17`, `rag_q18`, `agent_sql_01`, `agent_sql_04`)
+- **Total Discordant Pairs ($b + c$):** **15**
+- **Exact Two-Sided McNemar p-value:** **0.00739**
+- **Finding:** Statistically significant difference at $\alpha = 0.01$ ($p = 0.00739 < 0.01$). Rules 8 and 9 produce a statistically significant improvement in task completion (+24.4 percentage points) by actively preventing premature abstentions without tool calling. (Comparing Canonical Run 2 vs Baseline is likewise statistically significant: $b=4, c=15, p = 0.01921 < 0.05$).
 
 ---
 
@@ -209,8 +253,34 @@ The post-hoc intervention produced exactly **2 regressions** ($c=2$ items that p
 
 ### 5.6 Comprehensive Failure Analysis
 
-#### The 9 Failed Items Clarified
-In the pre-registered canonical configuration (`e2_json_on_retry_on.jsonl`, $n=45$), exactly **9 items failed** under strict keyword scoring (36 succeeded, yielding $\frac{36}{45} = 80.0\%$). An earlier draft mentioned 7 failures due to a manual counting oversight; the exact count from the JSONL trace is 9. Every failed item ID and its empirical breakdown is presented below:
+#### Failure Cause Classification Across All Configurations
+Every failed item in each evaluation configuration was classified according to the 5 specified root causes:
+
+| Configuration | Total (n) | Failed Items | Premature Abstention | Wrong Answer After Retrieval | Wrong Tool | Invalid JSON | Timeout |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Canonical Run 1** (`json_on_retry_on`) | 45 | **9** (20.0%) | 6 | 3 | 0 | 0 | 0 |
+| **Canonical Run 2** (`json_on_retry_on_rerun`) | 45 | **9** (20.0%) | 4 | 4 | 0 | 1 | 0 |
+| **Canonical Pooled** (Runs 1 & 2) | 90 | **18** (20.0%) | 10 | 7 | 0 | 1 | 0 |
+| **Factorial:** `json_off_retry_on` | 45 | **8** (17.8%) | 5 | 3 | 0 | 0 | 0 |
+| **Factorial:** `json_off_retry_off` | 45 | **15** (33.3%) | 7 | 3 | 0 | 5 | 0 |
+| **Baseline Prompt** (Rules 8 & 9 omitted) | 45 | **20** (44.4%) | 15 | 4 | 0 | 1 | 0 |
+| **Post-Hoc Variant** (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`) | 45 | **5** (11.1%) | 1 | 4 | 0 | 0 | 0 |
+
+#### Technical Root Cause: Why `rag_q07` Shows `valid=False` with 0 Retries in Baseline Run
+In the baseline prompt run (`e3_prompt_baseline.jsonl`), item `rag_q07` records `tool_call_valid=False` with `retries=0`.
+Inspection of the raw JSONL trace reveals the recorded answer:
+`"Error during model communication: Ollama chat error (HTTP 500): {\"error\":\"prediction aborted, token repeat limit reached\"}"`.
+
+**Diagnostic Analysis:**
+1. During generation, the local Ollama process aborted prediction because the model exceeded Ollama's internal token repetition limit.
+2. In `backend/agent.py` (lines 465–479), the HTTP 500 response raises an `OllamaError` at the transport layer before any completion string is returned to the parser.
+3. The agent runner handles `OllamaError` by immediately aborting the run, recording the error message into `run.final_answer`, and returning `status="failed"`.
+4. Because the engine aborted before returning any JSON agent action, `tool_call_valid` evaluated to `False`.
+5. The agent retry mechanism (`MAX_FORMAT_RETRIES = 2`) is designed strictly for schema recovery when the model emits malformed JSON during ordinary completion. It is never triggered on engine crashes or HTTP transport errors.
+Consequently, zero retries were attempted, resulting in `valid=False` with `retries=0`. (An identical mechanism accounts for `rag_q30` in Canonical Run 2).
+
+#### The 9 Failed Items from Canonical Run 1 Clarified
+In the pre-registered canonical configuration (`e2_json_on_retry_on.jsonl`, $n=45$), exactly **9 items failed** under strict keyword scoring (36 succeeded, yielding $\frac{36}{45} = 80.0\%$). Every failed item ID and its empirical breakdown is presented below:
 
 | Item ID | Suite | Question | Expected Keyword / Ground Truth | Model Response Summary | Classified Failure Cause |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -234,17 +304,10 @@ Item `rag_q23` represents an automated string-scoring false negative:
 #### Strict vs. Adjudicated Benchmark Success Rates
 Crediting `rag_q23` yields the adjudicated success rate:
 
-| Metric | Canonical Pre-Registered (E2) | Post-Hoc Architectural Variant |
+| Metric | Canonical Run 1 (E2) | Post-Hoc Architectural Variant |
 | :--- | :--- | :--- |
 | **Strict Task Success Rate** | **80.0%** (36/45) [66.2%, 89.1%] | **88.9%** (40/45) [76.5%, 95.2%] |
 | **Adjudicated Task Success Rate** | **82.2%** (37/45) [68.7%, 90.7%] | **91.1%** (41/45) [79.3%, 96.5%] |
-
-#### Taxonomy Breakdown Across All 5 Specified Causes:
-- **`premature_abstention_without_tool_call`:** **6 items (66.7%)** — Model produced an abstention without searching documents.
-- **`wrong_answer_after_retrieval`:** **3 items (33.3%)** — Includes 1 scorer false negative (`rag_q23`), 1 hallucinated decoy (`rag_q27`), and 1 agent argument retry failure (`agent_doc_03`).
-- **`wrong_tool`:** **0 items (0.0%)** — Model never selected an inappropriate tool.
-- **`invalid_json`:** **0 items (0.0%)** — With JSON mode enabled, schema adherence was 100%.
-- **`timeout`:** **0 items (0.0%)** — No item exceeded the inference execution limit.
 
 The categorized failure distribution is visualized in `eval/results/failure_analysis.png`.
 
@@ -257,20 +320,29 @@ All latency and RAM numbers were **measured at ~0.8 GB free RAM on an 8 GB host 
 
 #### Measured Free RAM and Latency Context:
 - **Retrieval-Only Benchmarks (E1 & E1b):** Initial available RAM measured **~0.84 GB**. Mean retrieval latency across ChromaDB vector search was **2.34s – 2.37s** (std 0.01s – 0.14s). Peak Ollama generation RSS is recorded as **N/A** in `summary.csv` because no LLM generation process was invoked.
-- **Canonical E2 Run (Oct 16):** Initial available RAM measured **~0.65 GB**. Warm-up cold start was **11.667s**, and overall mean latency was **27.86 seconds per item** (median **31.41s**, std **12.90s**).
-- **Hypothesis on Canonical Latency (27.86 s):** It is hypothesized (not an empirical finding) that two confounding factors influenced the 27.86s figure:
-  1. Six answerable items prematurely returned brief 1-turn abstentions without invoking retrieval tools, which lowered average duration compared to runs where all items executed multi-turn loops.
-  2. Conversely, intermittent OS memory paging during multi-turn items under background host load may have introduced periodic latency stalls.
-- **Post-Hoc Architectural Variant Run (`posthoc_retrieval_before_abstain`, Oct 17):** Note that **40.06 s is the post-hoc variant, not the canonical configuration**. Initial available RAM was measured at **~0.82 GB**. Warm-up cold start was **3.967s**. Mean latency per item was **40.06 seconds** (median **43.09s**, std **14.45s**, min **12.73s**, max **64.19s**), reflecting the additional second inference turn when premature abstentions were intercepted. Peak Ollama host RSS was **2,335.4 MB (~2.28 GB)**.
-- **Comparability Warning:** The canonical (27.86 s) and post-hoc (40.06 s) runs are **not directly comparable** because host memory load was not controlled between the runs (background process activity, initial available RAM, and memory paging varied across test sessions).
+- **Canonical E2 Run 1 (Oct 16):** Initial available RAM measured **~0.65 GB**. Warm-up cold start was **11.667s**, and overall mean latency was **27.86 seconds per item** (median **31.41s**, std **12.90s**).
+- **Canonical E2 Run 2 (Oct 17):** Initial available RAM measured **~0.78 GB**. Warm-up cold start was **8.792s**, and overall mean latency was **55.39 seconds per item** (median **60.74s**, std **31.59s**).
+- **Canonical Pooled ($n=90$, Repeats=2):** Overall mean latency was **41.62 seconds per item** (median **35.54s**, std **27.70s**).
+- **Hypothesis on Canonical Latency Variation:** It is hypothesized (not an empirical finding) that host memory paging and thread contention under Windows background services significantly fluctuated execution speed between sessions, while premature 1-turn abstentions without tool calling reduced durations for items that failed early.
+- **Post-Hoc Architectural Variant Run (`posthoc_retrieval_before_abstain`, Oct 17):** Note that **40.06 s is the post-hoc variant, not the canonical configuration**. Initial available RAM was measured at **~0.82 GB**. Warm-up cold start was **3.967s**. Mean latency per item was **40.06 seconds** (median **43.09s**, std **14.45s**, min **12.73s**, max **64.19s**). Peak Ollama host RSS was **2,335.4 MB (~2.28 GB)**.
+- **Comparability Warning:** The canonical (27.86s / 55.39s) and post-hoc (40.06s) runs are **not directly comparable** because host memory load was not controlled between the runs (background process activity, initial available RAM, and memory paging varied across test sessions).
 - **Real Host Live Acceptance Verification (`scripts/live_check.py 1`):** Measured at start with **~0.85 GB** available RAM; peak Ollama process RAM was **2,232.04 MB** and peak backend process RAM was **167.11 MB**.
 
-#### Detailed Per-Task Latency Breakdown (From Post-Hoc Variant Run, measured at ~0.8 GB free RAM on an 8 GB host with the IDE open; memory-constrained):
-- **Pure Vector Search (`nomic-embed-text` on ChromaDB):** **2.34s – 2.37s**
-- **Calculator Agent Tasks ($n = 5$):** Mean **16.44s** (median **16.08s**, min **12.73s**, max **19.36s**)
-- **SQL Analytical Tasks ($n = 5$):** Mean **24.02s** (median **18.76s**, min **17.58s**, max **46.88s**)
-- **Document Assistant Tasks ($n = 5$):** Mean **45.33s** (median **44.11s**, min **36.16s**, max **60.88s**)
-- **RAG Policy Questions ($n = 30$):** Mean **45.79s** (median **45.94s**, min **22.34s**, max **64.19s**)
+#### Detailed Per-Task Latency Breakdown Across Configurations:
+
+| Configuration | Total (n) | Overall Mean Latency | RAG Policy Queries | Calculator Tasks | SQL Analytical Tasks | Document Assistant Tasks |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Canonical Run 1** (`json_on_retry_on`) | 45 | **27.86s** | 32.17s | 12.32s | 17.31s | 28.14s |
+| **Canonical Run 2** (`json_on_retry_on_rerun`) | 45 | **55.39s** | 71.71s | 10.30s | 14.37s | 43.53s |
+| **Canonical Pooled** (Runs 1 & 2) | 90 | **41.62s** | 51.94s | 11.31s | 15.84s | 35.84s |
+| **Factorial:** `json_off_retry_on` | 45 | **23.53s** | 26.28s | 10.46s | 16.21s | 27.46s |
+| **Factorial:** `json_off_retry_off` | 45 | **19.25s** | 20.81s | 10.46s | 10.59s | 27.33s |
+| **Baseline Prompt** (Rules 8 & 9 omitted) | 45 | **16.17s** | 17.82s | 10.22s | 13.73s | 14.69s |
+| **Post-Hoc Variant** (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`) | 45 | **40.06s** | 45.79s | 16.44s | 24.02s | 45.33s |
+
+> [!IMPORTANT]
+> **Methodology Note on Latency Comparability (Why Overall Means Cannot Be Directly Compared):**
+> Overall aggregate latency means across configurations are **not directly comparable** because abstentions end early. When an agent prematurely abstains without issuing a tool call (such as the 15 premature abstentions in `e3_prompt_baseline`, 6 in Canonical Run 1, and 7 in `json_off_retry_off`), it generates a short negative sentence on Turn 1 in ~10–12 seconds without executing vector searches or database queries. Conversely, configurations that successfully invoke tools perform multi-turn reasoning and retrieval loops lasting 25–70+ seconds. Aggregate mean latencies thus confound execution efficiency with failure-mode dropouts (a configuration with more early-exit failures appears misleadingly "faster"). Meaningful latency evaluations must be compared per task type and conditioned on multi-turn tool execution.
 
 #### Memory Safety Safeguards:
 When Ollama holds `qwen2.5:3b` in host memory alongside the backend and vector store, total system memory utilization exceeds 87% (available RAM hovers between 0.60 GB and 0.95 GB). The `psutil`-based safety guard (`check_ram_safety` configured to `--min-ram 0.1`) actively ensured that runs did not cause operating system kernel panics or swapping thrashing.
@@ -312,14 +384,18 @@ Fresh validation runs performed directly on the `evaluation` branch:
 
 The empirical findings of this benchmark must be interpreted within the context of four primary methodological and hardware constraints:
 
-1. **Small Sample Size ($n = 45$):**
-   The primary benchmark evaluation set contains 45 items (30 RAG questions and 15 agent tasks). While $n = 45$ is rigorous for an on-premise local LLM benchmark on constrained hardware (representing ~30 minutes of continuous CPU inference per run), 95% Wilson confidence intervals span roughly $\pm 8\%$ to $\pm 13\%$ (e.g., [66.2%, 89.1%] for an 80.0% rate). As demonstrated by the paired McNemar test on discordant pairs ($b + c = 8 < 10$, $p = 0.289$), observed point-estimate gains cannot be proven statistically significant at the $\alpha = 0.05$ level without expanding the item pool to $n \ge 100$.
+1. **Sample Size ($n = 45$ per run, $n = 90$ pooled):**
+   The primary benchmark evaluation set contains 45 items (30 RAG questions and 15 agent tasks). With $n = 45$, 95% Wilson confidence intervals span roughly $\pm 8\%$ to $\pm 13\%$ (e.g., [66.2%, 89.1%] for an 80.0% rate). Pooling Repeats 1 and 2 ($n = 90$) narrows the confidence interval to [70.6%, 87.0%] ($\pm 8.2\%$). For paired comparisons across identical items, exact McNemar tests provide rigorous within-item statistical power:
+   - Rules 8 & 9 vs Baseline: $b=2, c=13, p=0.00739$ (statistically significant, $p < 0.01$).
+   - JSON Off Retry On vs Retry Off: $b=1, c=8, p=0.03906$ (statistically significant, $p < 0.05$).
+   - Canonical vs Post-Hoc: $b=6, c=2, p=0.28906$ ($b+c=8 < 10$, not statistically significant).
+   No claims of statistical significance are asserted without an exact test ($p < 0.05$).
 
 2. **Synthetic Policy Documents:**
    The evaluation corpus comprises 3 core documents (1,500–2,500 chars) and 15 distractor documents crafted with explicit numerical and named institutional rules. Although designed to mimic real university statutes, synthetic documents feature well-structured typography, clear section headings, and explicit parameters. Real-world enterprise and institutional corpora typically feature unstructured layouts, multi-page scanned PDFs, OCR transcription errors, ambiguous footnotes, complex multi-column tables, and contradictory administrative amendments, which present greater vector retrieval noise.
 
-3. **Single Repeat ($r = 1$):**
-   Due to the 8 GB host memory budget and CPU inference execution duration (~40 seconds per item; >30 minutes per 45-item run), all benchmark configurations were evaluated across a single full repeat ($r = 1$). A low decoding temperature ($T = 0.2$) was enforced to maximize determinism. Nonetheless, run-to-run stochastic variance in tool generation order and sampling fluctuations across multiple seeds remain unmeasured.
+3. **Repeatability ($r = 2$ for Canonical Configuration):**
+   The canonical configuration was evaluated across two full repeats ($r = 2$, pooled $n = 90$), demonstrating identical aggregate task success (80.0% in Run 1 and 80.0% in Run 2; McNemar $p = 1.00000$). Nonetheless, item-level analysis revealed 6 flips ($13.3\%$) driven primarily by stochastic premature abstention vs retrieval recovery, plus 1 Ollama HTTP 500 engine repeat-limit abort. Single-run configurations (`json_off_retry_on`, `json_off_retry_off`, baseline prompt) remain subject to run-to-run stochastic variance in tool generation order.
 
 4. **Single Evaluated Model (`qwen2.5:3b`):**
    All evaluation data, JSON schema adherence rates, premature abstention rates, and post-hoc retrieval behaviors were measured exclusively on `qwen2.5:3b` under Ollama on CPU. Findings cannot be directly extrapolated to larger parameter sizes (e.g. 7B, 14B, 32B) or other model families (such as Llama-3, Mistral, or Gemma). Larger models may possess stronger inherent instruction following that could obviate the need for post-hoc retrieval interceptors, but would require hardware with at least 16 GB to 32 GB of system RAM.

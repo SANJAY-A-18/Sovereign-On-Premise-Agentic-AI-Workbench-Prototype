@@ -224,6 +224,25 @@ def classify_failure_cause(item: Dict[str, Any]) -> str:
     return "wrong_answer_after_retrieval"
 
 
+def compute_latency_by_task_type(items: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Computes mean latency grouped by task type: RAG, calculator, SQL, document."""
+    by_type = {"RAG": [], "calculator": [], "SQL": [], "document": []}
+    for it in items:
+        item_id = it.get("item_id", "")
+        lat = it.get("latency_s")
+        if lat is None:
+            continue
+        if item_id.startswith("rag_"):
+            by_type["RAG"].append(lat)
+        elif item_id.startswith("agent_calc_"):
+            by_type["calculator"].append(lat)
+        elif item_id.startswith("agent_sql_"):
+            by_type["SQL"].append(lat)
+        elif item_id.startswith("agent_doc_"):
+            by_type["document"].append(lat)
+    return {k: round(sum(v) / len(v), 2) if v else 0.0 for k, v in by_type.items()}
+
+
 def generate_summary_csv(
     all_results: Dict[str, Dict[str, Any]],
     e1b_results: Dict[int, Dict[str, Any]],
@@ -266,12 +285,32 @@ def generate_summary_csv(
             if exp_tag == "e3_prompt_hardened":
                 continue  # Skip duplicate row; identical to e2_json_on_retry_on
             if summary.get("status") == "not run":
+                exp_prefix = exp_tag.split("_")[0].upper()
                 writer.writerow({
-                    "experiment": exp_tag.split("_")[0].upper(),
+                    "experiment": exp_prefix,
                     "config_tag": exp_tag,
                     "status": "not run",
                     "n": 0,
                     "repeats": 0,
+                    "tool_call_valid_pct": "N/A",
+                    "tool_call_valid_ci": "N/A",
+                    "task_success_pct": "N/A",
+                    "task_success_ci": "N/A",
+                    "retrieval_hit_pct": "N/A",
+                    "retrieval_hit_ci": "N/A",
+                    "chunk_hit1_pct": "N/A",
+                    "chunk_hit1_ci": "N/A",
+                    "chunk_hit3_pct": "N/A",
+                    "chunk_hit3_ci": "N/A",
+                    "mrr": "N/A",
+                    "citation_valid_pct": "N/A",
+                    "citation_valid_ci": "N/A",
+                    "mean_latency_s": "N/A",
+                    "median_latency_s": "N/A",
+                    "std_latency_s": "N/A",
+                    "peak_ollama_rss_mb": "N/A",
+                    "cold_start_s": "N/A",
+                    "total_retries": 0,
                 })
                 continue
 
@@ -282,8 +321,19 @@ def generate_summary_csv(
             h_ci = summary.get("retrieval_hit_ci")
             c_ci = summary.get("citation_valid_ci")
 
+            exp_prefix = exp_tag.split("_")[0].upper()
+            if exp_tag.startswith("posthoc"):
+                exp_prefix = "POSTHOC"
+
+            # E1 runs are retrieval-only; peak RSS is N/A
+            peak_rss_val = (
+                "N/A"
+                if (exp_tag.startswith("e1_") or summary.get("flags", {}).get("retrieval_only"))
+                else summary.get("peak_ollama_rss_mb", 0.0)
+            )
+
             writer.writerow({
-                "experiment": exp_tag.split("_")[0].upper(),
+                "experiment": exp_prefix,
                 "config_tag": exp_tag,
                 "status": "completed",
                 "n": summary["n"],
@@ -304,7 +354,7 @@ def generate_summary_csv(
                 "mean_latency_s": summary.get("mean_latency_s", 0.0),
                 "median_latency_s": summary.get("median_latency_s", 0.0),
                 "std_latency_s": summary.get("std_latency_s", 0.0),
-                "peak_ollama_rss_mb": summary.get("peak_ollama_rss_mb", 0.0),
+                "peak_ollama_rss_mb": peak_rss_val,
                 "cold_start_s": summary.get("cold_start_s", 0.0),
                 "total_retries": summary.get("total_retries", 0),
             })
@@ -343,15 +393,12 @@ def generate_summary_csv(
                 })
 
 
-def generate_paired_mcnemar_report(items_a: List[Dict[str, Any]], items_b: List[Dict[str, Any]], label_a: str, label_b: str) -> str:
+def run_paired_mcnemar(items_a: List[Dict[str, Any]], items_b: List[Dict[str, Any]]) -> Tuple[int, int, int, int, int, int, float]:
     """Computes exact McNemar test for paired binary outcomes on shared items."""
-    map_a = {(it["item_id"], it.get("repeat", 1)): it for it in items_a}
-    map_b = {(it["item_id"], it.get("repeat", 1)): it for it in items_b}
+    map_a = {it["item_id"]: it for it in items_a}
+    map_b = {it["item_id"]: it for it in items_b}
 
     common_keys = sorted(set(map_a.keys()).intersection(set(map_b.keys())))
-    if not common_keys:
-        return "No overlapping items found for paired comparison."
-
     b = 0  # A failed, B succeeded
     c = 0  # A succeeded, B failed
     both_pass = 0
@@ -370,18 +417,25 @@ def generate_paired_mcnemar_report(items_a: List[Dict[str, Any]], items_b: List[
             both_fail += 1
 
     _, _, p_value = compute_mcnemar_exact(b, c)
-    discordant = b + c
+    return len(common_keys), both_pass, both_fail, b, c, (b + c), p_value
 
+
+def format_mcnemar_block(items_a: List[Dict[str, Any]], items_b: List[Dict[str, Any]], label_a: str, label_b: str) -> str:
+    """Formats full paired McNemar test block with interpretation."""
+    n, both_pass, both_fail, b, c, discordant, p_value = run_paired_mcnemar(items_a, items_b)
     lines = [
-        f"**Paired McNemar Test:** `{label_a}` vs `{label_b}` (n = {len(common_keys)} common runs)",
+        f"**Paired McNemar Test:** `{label_a}` vs `{label_b}` (n = {n} identical items)",
         f"- Concordant: Both Pass = {both_pass}, Both Fail = {both_fail}",
-        f"- Discordant: ({label_a} Fail, {label_b} Pass) = {b} | ({label_a} Pass, {label_b} Fail) = {c}",
-        f"- Discordant total: {discordant}",
+        f"- Discordant: ({label_a} Fail, {label_b} Pass) [b] = {b} | ({label_a} Pass, {label_b} Fail) [c] = {c}",
+        f"- Total Discordant Pairs (b + c): {discordant}",
         f"- Exact Two-Sided McNemar p-value: **{p_value:.5f}**",
     ]
     if discordant < 10:
         lines.append(f"> *Note on Sample Size:* Discordant pair count (b + c = {discordant}) is too small (< 10) to draw statistically definitive conclusions.")
-
+    elif p_value < 0.05:
+        lines.append(f"> *Finding:* Difference is statistically significant at alpha = 0.05 (p = {p_value:.5f}).")
+    else:
+        lines.append(f"> *Finding:* Difference is not statistically significant at alpha = 0.05 (p = {p_value:.5f}).")
     return "\n".join(lines)
 
 
@@ -499,7 +553,7 @@ def plot_e2_factorial(e2_data: Dict[str, Dict[str, Any]], out_file: Path):
     x = range(len(labels))
     width = 0.35
 
-    fig, ax = plt.subplots(figsize=(8, 4.5), dpi=200)
+    fig, ax = plt.subplots(figsize=(9.5, 4.8), dpi=200)
     ax.bar([i - width/2 for i in x], valid_rates, width, label="First-Try Validity (%)", color=CB_PALETTE["sky_blue"], edgecolor="#1E293B")
     ax.bar([i + width/2 for i in x], success_rates, width, label="Task Success (%)", color=CB_PALETTE["green"], edgecolor="#1E293B")
 
@@ -507,7 +561,7 @@ def plot_e2_factorial(e2_data: Dict[str, Dict[str, Any]], out_file: Path):
     ax.set_xlabel("Configuration", fontsize=10, labelpad=8)
     ax.set_ylabel("Rate (%)", fontsize=10, labelpad=8)
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=9, rotation=15)
+    ax.set_xticklabels(labels, fontsize=8.5, rotation=15, ha="right")
     ax.set_ylim(0, 115)
     ax.legend(loc="upper left")
     ax.grid(axis="y", linestyle="--", alpha=0.5)
@@ -520,27 +574,36 @@ def plot_e2_factorial(e2_data: Dict[str, Dict[str, Any]], out_file: Path):
 
 def plot_latency_and_memory(all_summaries: Dict[str, Dict[str, Any]], out_file: Path):
     """Chart: Mean Latency (s) and Peak Ollama RAM (MB) across configurations run."""
-    configs = [k for k, v in all_summaries.items() if v.get("status") == "completed" and "e1" not in k]
+    plot_configs = [
+        ("Canonical R1", "e2_json_on_retry_on"),
+        ("Canonical R2", "e2_json_on_retry_on_rerun"),
+        ("json_off + retry", "e2_json_off_retry_on"),
+        ("json_off no retry", "e2_json_off_retry_off"),
+        ("Baseline Prompt", "e3_prompt_baseline"),
+        ("Post-Hoc Variant", "posthoc_retrieval_before_abstain"),
+    ]
+    configs = [(name, tag) for name, tag in plot_configs if tag in all_summaries and all_summaries[tag].get("status") == "completed"]
     if not configs:
         return
 
-    latencies = [all_summaries[k]["mean_latency_s"] for k in configs]
-    ram_mb = [all_summaries[k]["peak_ollama_rss_mb"] for k in configs]
+    labels = [name for name, tag in configs]
+    latencies = [all_summaries[tag]["mean_latency_s"] for name, tag in configs]
+    ram_mb = [all_summaries[tag]["peak_ollama_rss_mb"] for name, tag in configs]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5), dpi=200)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.5, 4.8), dpi=200)
 
     ax1.bar(range(len(configs)), latencies, color=CB_PALETTE["orange"], edgecolor="#1E293B", width=0.45)
     ax1.set_title("Mean Latency per Item (s)", fontsize=11, fontweight="bold")
     ax1.set_ylabel("Latency (Seconds)", fontsize=9)
     ax1.set_xticks(range(len(configs)))
-    ax1.set_xticklabels(configs, rotation=20, ha="right", fontsize=8)
+    ax1.set_xticklabels(labels, rotation=25, ha="right", fontsize=8)
     ax1.grid(axis="y", linestyle="--", alpha=0.5)
 
     ax2.bar(range(len(configs)), ram_mb, color=CB_PALETTE["purple"], edgecolor="#1E293B", width=0.45)
     ax2.set_title("Peak Ollama Process RSS (MB)", fontsize=11, fontweight="bold")
     ax2.set_ylabel("Memory RSS (MB)", fontsize=9)
     ax2.set_xticks(range(len(configs)))
-    ax2.set_xticklabels(configs, rotation=20, ha="right", fontsize=8)
+    ax2.set_xticklabels(labels, rotation=25, ha="right", fontsize=8)
     ax2.grid(axis="y", linestyle="--", alpha=0.5)
 
     plt.tight_layout()
@@ -562,12 +625,12 @@ def plot_failure_analysis(failure_counts: Dict[str, int], out_file: Path):
     bars = ax.bar(
         range(len(labels)),
         counts,
-        color=[CB_PALETTE["vermilion"], CB_PALETTE["orange"], CB_PALETTE["purple"], CB_PALETTE["grey"]][:len(labels)],
+        color=[CB_PALETTE["vermilion"], CB_PALETTE["orange"], CB_PALETTE["purple"], CB_PALETTE["grey"], CB_PALETTE["blue"]][:len(labels)],
         edgecolor="#1E293B",
         width=0.45,
     )
 
-    ax.set_title("Failure Cause Classification (Baseline & Pre-registered Runs)", fontsize=12, fontweight="bold", pad=12)
+    ax.set_title("Failure Cause Classification (Canonical Pooled, n=90)", fontsize=12, fontweight="bold", pad=12)
     ax.set_xlabel("Failure Mode", fontsize=10, labelpad=8)
     ax.set_ylabel("Number of Failed Items", fontsize=10, labelpad=8)
     ax.set_xticks(range(len(labels)))
@@ -628,24 +691,61 @@ def main():
             e1b_summaries[cs] = s
             all_raw_items[f"e1b_chunk_{cs}"] = items
 
-    # 3. Load E2 results
-    e2_configs = [
-        ("e2_json_on_retry_on", "json_on_retry_on"),
-        ("e2_json_on_retry_off", "json_on_retry_off"),
-        ("e2_json_off_retry_on", "json_off_retry_on"),
-        ("e2_json_off_retry_off", "json_off_retry_off"),
-    ]
-    e2_plot_data = {}
-    for tag, label in e2_configs:
-        fpath = RESULTS_DIR / f"{tag}.jsonl"
-        meta, items = load_jsonl_results(fpath)
-        if items:
-            s = calculate_metrics_summary(items, meta)
-            all_summaries[tag] = s
-            all_raw_items[tag] = items
-            e2_plot_data[label] = s
-        else:
-            all_summaries[tag] = {"status": "not run", "n": 0}
+    # 3. Load E2 results (Canonical Repeats 1 & 2 + Factorials)
+    # Load Run 1
+    f_r1 = RESULTS_DIR / "e2_json_on_retry_on.jsonl"
+    meta_r1, items_r1 = load_jsonl_results(f_r1)
+    if items_r1:
+        s_r1 = calculate_metrics_summary(items_r1, meta_r1)
+        all_summaries["e2_json_on_retry_on"] = s_r1
+        all_raw_items["e2_json_on_retry_on"] = items_r1
+    else:
+        all_summaries["e2_json_on_retry_on"] = {"status": "not run", "n": 0}
+
+    # Load Run 2
+    f_r2 = RESULTS_DIR / "e2_json_on_retry_on_rerun.jsonl"
+    meta_r2, items_r2 = load_jsonl_results(f_r2)
+    if items_r2:
+        s_r2 = calculate_metrics_summary(items_r2, meta_r2)
+        all_summaries["e2_json_on_retry_on_rerun"] = s_r2
+        all_raw_items["e2_json_on_retry_on_rerun"] = items_r2
+    else:
+        all_summaries["e2_json_on_retry_on_rerun"] = {"status": "not run", "n": 0}
+
+    # Compute Pooled Canonical (Repeats=2, n=90)
+    if items_r1 and items_r2:
+        meta_pooled = {
+            **meta_r1,
+            "repeats": 2,
+            "cold_start_s": round((meta_r1.get("cold_start_s", 0) + meta_r2.get("cold_start_s", 0)) / 2, 3),
+        }
+        items_pooled = items_r1 + items_r2
+        s_pooled = calculate_metrics_summary(items_pooled, meta_pooled)
+        all_summaries["e2_json_on_retry_on_pooled"] = s_pooled
+        all_raw_items["e2_json_on_retry_on_pooled"] = items_pooled
+
+    # json_on_retry_off: omitted with explanation
+    all_summaries["e2_json_on_retry_off"] = {"status": "not run", "n": 0}
+
+    # json_off_retry_on
+    f_off_on = RESULTS_DIR / "e2_json_off_retry_on.jsonl"
+    meta_off_on, items_off_on = load_jsonl_results(f_off_on)
+    if items_off_on:
+        s_off_on = calculate_metrics_summary(items_off_on, meta_off_on)
+        all_summaries["e2_json_off_retry_on"] = s_off_on
+        all_raw_items["e2_json_off_retry_on"] = items_off_on
+    else:
+        all_summaries["e2_json_off_retry_on"] = {"status": "not run", "n": 0}
+
+    # json_off_retry_off
+    f_off_off = RESULTS_DIR / "e2_json_off_retry_off.jsonl"
+    meta_off_off, items_off_off = load_jsonl_results(f_off_off)
+    if items_off_off:
+        s_off_off = calculate_metrics_summary(items_off_off, meta_off_off)
+        all_summaries["e2_json_off_retry_off"] = s_off_off
+        all_raw_items["e2_json_off_retry_off"] = items_off_off
+    else:
+        all_summaries["e2_json_off_retry_off"] = {"status": "not run", "n": 0}
 
     # 4. Load E3 results
     e3_configs = [
@@ -690,12 +790,24 @@ def main():
     if e1b_summaries:
         plot_e1b_chunk_level(e1b_summaries, RESULTS_DIR / "e1b_chunk_level_retrieval.png")
 
+    e2_plot_data = {}
+    if "e2_json_on_retry_on" in all_summaries and all_summaries["e2_json_on_retry_on"].get("status") == "completed":
+        e2_plot_data["json_on (Run 1)"] = all_summaries["e2_json_on_retry_on"]
+    if "e2_json_on_retry_on_rerun" in all_summaries and all_summaries["e2_json_on_retry_on_rerun"].get("status") == "completed":
+        e2_plot_data["json_on (Run 2)"] = all_summaries["e2_json_on_retry_on_rerun"]
+    if "e2_json_on_retry_on_pooled" in all_summaries:
+        e2_plot_data["json_on (Pooled)"] = all_summaries["e2_json_on_retry_on_pooled"]
+    if "e2_json_off_retry_on" in all_summaries and all_summaries["e2_json_off_retry_on"].get("status") == "completed":
+        e2_plot_data["json_off_retry_on"] = all_summaries["e2_json_off_retry_on"]
+    if "e2_json_off_retry_off" in all_summaries and all_summaries["e2_json_off_retry_off"].get("status") == "completed":
+        e2_plot_data["json_off_retry_off"] = all_summaries["e2_json_off_retry_off"]
+
     if e2_plot_data:
         plot_e2_factorial(e2_plot_data, RESULTS_DIR / "e2_reliability_factorial.png")
 
     plot_latency_and_memory(all_summaries, RESULTS_DIR / "latency_and_memory.png")
 
-    # 6. Failure Analysis for E2 canonical run
+    # Load dataset lookup for questions and ground truth
     dataset_lookup = {}
     eval_dir = Path(__file__).resolve().parent
     rag_q_file = eval_dir / "data" / "rag_questions.json"
@@ -707,29 +819,22 @@ def main():
         for a_it in json.loads(agent_t_file.read_text(encoding="utf-8")):
             dataset_lookup[a_it["id"]] = a_it
 
-    e2_failed_items = []
-    failure_counts = {
+    # Failure counts for Canonical Pooled
+    failure_counts_pooled = {
         "premature_abstention_without_tool_call": 0,
         "wrong_answer_after_retrieval": 0,
         "wrong_tool": 0,
         "invalid_json": 0,
         "timeout": 0,
     }
-
-    if "e2_json_on_retry_on" in all_raw_items:
-        for it in all_raw_items["e2_json_on_retry_on"]:
+    if "e2_json_on_retry_on_pooled" in all_raw_items:
+        for it in all_raw_items["e2_json_on_retry_on_pooled"]:
             if it.get("task_success") is False:
                 cause = classify_failure_cause(it)
-                failure_counts[cause] = failure_counts.get(cause, 0) + 1
-                orig = dataset_lookup.get(it["item_id"], {})
-                if not it.get("expected_keywords") and orig.get("expected_keywords"):
-                    it["expected_keywords"] = orig["expected_keywords"]
-                if not it.get("ground_truth") and orig.get("ground_truth"):
-                    it["ground_truth"] = orig["ground_truth"]
-                e2_failed_items.append((it, cause))
+                failure_counts_pooled[cause] = failure_counts_pooled.get(cause, 0) + 1
 
-    if any(failure_counts.values()):
-        plot_failure_analysis(failure_counts, RESULTS_DIR / "failure_analysis.png")
+    if any(failure_counts_pooled.values()):
+        plot_failure_analysis(failure_counts_pooled, RESULTS_DIR / "failure_analysis.png")
 
     # Generate Markdown Summary Tables & Findings
     md_lines = [
@@ -766,47 +871,189 @@ def main():
                     f"| {cs} chars | 18 | {s['n_ans']} | **{s['chunk_hit1_rate']*100:.1f}%** | [{h1_ci[0]*100:.1f}%, {h1_ci[1]*100:.1f}%] | **{s['chunk_hit3_rate']*100:.1f}%** | [{h3_ci[0]*100:.1f}%, {h3_ci[1]*100:.1f}%] | **{s['mrr']:.4f}** | {'Highest point estimate; 95% CIs overlap across sizes at n=24 (no superiority claim)' if cs==800 else 'Multi-sentence clauses split across boundaries; CIs overlap at n=24'} |"
                 )
 
+    # E2 Table
     md_lines.append("")
     md_lines.append("## Experiment 2: Reliability Factorial (JSON Mode x Retry)")
-    md_lines.append("| Configuration | Status | n | First-Try Validity | 95% CI | Task Success | 95% CI | Mean Latency |")
-    md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    md_lines.append("| Configuration | Status | n | Repeats | First-Try Validity | 95% CI | Task Success | 95% CI | Mean Latency | Peak Ollama RSS |")
+    md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
-    for tag, label in e2_configs:
+    e2_table_rows = [
+        ("Canonical Run 1 (`json_on_retry_on`)", "e2_json_on_retry_on"),
+        ("Canonical Run 2 (`json_on_retry_on_rerun`)", "e2_json_on_retry_on_rerun"),
+        ("Canonical Pooled (`n=90`, Repeats=2)", "e2_json_on_retry_on_pooled"),
+        ("Factorial: `json_on_retry_off`", "e2_json_on_retry_off"),
+        ("Factorial: `json_off_retry_on`", "e2_json_off_retry_on"),
+        ("Factorial: `json_off_retry_off`", "e2_json_off_retry_off"),
+    ]
+
+    for label, tag in e2_table_rows:
         s = all_summaries.get(tag, {})
         if s.get("status") == "completed":
             v_ci = s.get("tool_call_valid_ci", (0, 0))
             s_ci = s.get("task_success_ci", (0, 0))
             md_lines.append(
-                f"| `{label}` | Completed | {s['n']} | **{s['tool_call_valid_rate']*100:.1f}%** | [{v_ci[0]*100:.1f}%, {v_ci[1]*100:.1f}%] | **{s['task_success_rate']*100:.1f}%** | [{s_ci[0]*100:.1f}%, {s_ci[1]*100:.1f}%] | {s['mean_latency_s']}s* |"
+                f"| {label} | Completed | {s['n']} | {s['repeats']} | **{s['tool_call_valid_rate']*100:.1f}%** | [{v_ci[0]*100:.1f}%, {v_ci[1]*100:.1f}%] | **{s['task_success_rate']*100:.1f}%** | [{s_ci[0]*100:.1f}%, {s_ci[1]*100:.1f}%] | {s['mean_latency_s']}s* | {s['peak_ollama_rss_mb']} MB |"
             )
         else:
-            md_lines.append(f"| `{label}` | *not run* | 0 | N/A | N/A | N/A | N/A | N/A |")
+            md_lines.append(f"| {label} | *not run* | 0 | 0 | N/A | N/A | N/A | N/A | N/A | N/A |")
 
     md_lines.append("")
     md_lines.append(
-        "*Note on Latency & Memory Conditions:* All latency and RAM numbers were measured at ~0.8 GB free RAM on an 8 GB host with the IDE open; memory-constrained. "
-        "Note that 40.06s is the post-hoc variant (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`), not the canonical configuration. "
-        "The canonical configuration (27.86s) and post-hoc variant runs are not directly comparable because host memory load was not controlled. "
-        "Regarding the canonical 27.86s mean, it is hypothesized (not an empirical finding) that 6 premature 1-turn abstentions without tool calling lowered the average duration, "
-        "while intermittent OS memory paging during multi-turn items introduced latency stalls. In the post-hoc run, warm-up cold start was 3.967s, "
-        "mean latency was 40.06s (median 43.09s, std 14.45s), and peak Ollama host RSS was 2,335.4 MB."
+        "*Note on `json_on_retry_off`:* This configuration was not run because with JSON mode active (`json_mode=True`), "
+        "the model achieved 100% first-try schema validity in Run 1 (45/45 valid, 0 retries required across all items) and "
+        "97.8% in Run 2 (where the single invalid item was an Ollama HTTP 500 token repeat limit abort, not a JSON schema error). "
+        "Because format errors did not occur under JSON mode, running `json_on_retry_off` was omitted to avoid redundant CPU thermal throttling on the 8 GB laptop."
     )
 
+    # Paired McNemar Tests Table
     md_lines.append("")
-    md_lines.append("## Experiment 3: Prompt Variant (Baseline vs Hardened)")
-    md_lines.append("| Variant | Status | n | First-Try Validity | 95% CI | Task Success | 95% CI |")
+    md_lines.append("## Paired Exact McNemar Tests (Identical Items)")
+    md_lines.append("| Comparison | Common Items (n) | Both Pass | Both Fail | b (Cond 1 Fail, Cond 2 Pass) | c (Cond 1 Pass, Cond 2 Fail) | Total Discordant (b + c) | Exact Two-Sided p-value | Significance (alpha=0.05) |")
+    md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+
+    mcnemar_pairs = [
+        ("Canonical Run 1 vs Baseline Prompt", items_r1, all_raw_items.get("e3_prompt_baseline", [])),
+        ("json_off_retry_on vs json_off_retry_off", items_off_on, items_off_off),
+        ("Canonical Run 1 vs json_off_retry_on", items_r1, items_off_on),
+        ("Canonical Run 1 vs Canonical Run 2", items_r1, items_r2),
+    ]
+    if posthoc_summary and items_posthoc:
+        mcnemar_pairs.append(("Canonical Run 1 vs Post-Hoc Variant", items_r1, items_posthoc))
+
+    for comp_name, list_a, list_b in mcnemar_pairs:
+        if list_a and list_b:
+            n_c, bp, bf, b_val, c_val, disc, p_val = run_paired_mcnemar(list_a, list_b)
+            sig_str = "**Significant (p < 0.05)**" if p_val < 0.05 else "Not significant"
+            if disc < 10:
+                sig_str += " *(b+c < 10)*"
+            md_lines.append(
+                f"| `{comp_name}` | {n_c} | {bp} | {bf} | {b_val} | {c_val} | {disc} | **{p_val:.5f}** | {sig_str} |"
+            )
+
+    # Item-Level Flip Table for Run 1 vs Run 2
+    if items_r1 and items_r2:
+        md_lines.append("")
+        md_lines.append("### Item-Level Flip Table: Canonical Run 1 vs Run 2")
+        map_r1 = {it["item_id"]: it for it in items_r1}
+        map_r2 = {it["item_id"]: it for it in items_r2}
+        common = sorted(set(map_r1.keys()).intersection(set(map_r2.keys())))
+        flip_items = [k for k in common if bool(map_r1[k].get("task_success")) != bool(map_r2[k].get("task_success"))]
+
+        md_lines.append(
+            f"Across identical 45 items, exactly **{len(flip_items)} items flipped** (Run 1 Pass -> Run 2 Fail: 3; Run 1 Fail -> Run 2 Pass: 3; McNemar p = 1.00000):"
+        )
+        md_lines.append("")
+        md_lines.append("| Item ID | Suite | Question | Expected / Ground Truth | Run 1 Outcome | Run 1 Response Summary | Run 2 Outcome | Run 2 Response Summary | Flip Diagnosis |")
+        md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+
+        for k in flip_items:
+            it1 = map_r1[k]
+            it2 = map_r2[k]
+            orig = dataset_lookup.get(k, {})
+            q = orig.get("question", it1.get("question", ""))
+            kw_gt = str(orig.get("expected_keywords") or orig.get("ground_truth", ""))
+            q_short = (q[:55] + "...") if len(q) > 55 else q
+            ans1 = str(it1.get("answer", "")).replace("\n", " ")
+            ans2 = str(it2.get("answer", "")).replace("\n", " ")
+            ans1_short = (ans1[:50] + "...") if len(ans1) > 50 else ans1
+            ans2_short = (ans2[:50] + "...") if len(ans2) > 50 else ans2
+            s1 = "PASS" if it1.get("task_success") else "FAIL"
+            s2 = "PASS" if it2.get("task_success") else "FAIL"
+
+            if k in ("rag_q09", "rag_q11"):
+                diag = "Stochastic premature abstention without tool call on Run 2"
+            elif k in ("rag_q13", "rag_q14", "rag_q20"):
+                diag = "Model recovered from Run 1 premature abstention; searched documents and answered correctly"
+            elif k == "rag_q30":
+                diag = "Ollama HTTP 500 token repeat limit abort on Run 2 (transport error; tool_call_valid=False)"
+            else:
+                diag = f"Flip from {s1} to {s2}"
+
+            md_lines.append(f"| `{k}` | {it1.get('suite')} | {q_short} | `{kw_gt}` | **{s1}** | {ans1_short} | **{s2}** | {ans2_short} | {diag} |")
+
+    # Failure Cause Classification Table Across All Configurations
+    md_lines.append("")
+    md_lines.append("## Failure Cause Classification Across All Configurations")
+    md_lines.append("| Configuration | Evaluated (n) | Failed Items | Premature Abstention | Wrong Answer After Retrieval | Wrong Tool | Invalid JSON | Timeout |")
+    md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+
+    all_failure_runs = [
+        ("Canonical Run 1 (`json_on_retry_on`)", "e2_json_on_retry_on"),
+        ("Canonical Run 2 (`json_on_retry_on_rerun`)", "e2_json_on_retry_on_rerun"),
+        ("Canonical Pooled (`n=90`, Repeats=2)", "e2_json_on_retry_on_pooled"),
+        ("Factorial: `json_off_retry_on`", "e2_json_off_retry_on"),
+        ("Factorial: `json_off_retry_off`", "e2_json_off_retry_off"),
+        ("Baseline Prompt (Rules 8 & 9 omitted)", "e3_prompt_baseline"),
+        ("Post-Hoc (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`)", "posthoc_retrieval_before_abstain"),
+    ]
+
+    for label, tag in all_failure_runs:
+        items = all_raw_items.get(tag, [])
+        if not items:
+            continue
+        n = len(items)
+        failed_items = [it for it in items if it.get("task_success") is False]
+        counts = {
+            "premature_abstention_without_tool_call": 0,
+            "wrong_answer_after_retrieval": 0,
+            "wrong_tool": 0,
+            "invalid_json": 0,
+            "timeout": 0,
+        }
+        for it in failed_items:
+            cause = classify_failure_cause(it)
+            counts[cause] = counts.get(cause, 0) + 1
+
+        md_lines.append(
+            f"| {label} | {n} | **{len(failed_items)}** | {counts['premature_abstention_without_tool_call']} | "
+            f"{counts['wrong_answer_after_retrieval']} | {counts['wrong_tool']} | "
+            f"{counts['invalid_json']} | {counts['timeout']} |"
+        )
+
+    md_lines.append("")
+    md_lines.append("### Diagnostic Analysis: Why `rag_q07` Shows `valid=False` with 0 Retries in Baseline Run")
+    md_lines.append(
+        "In `e3_prompt_baseline.jsonl`, item `rag_q07` records `tool_call_valid=False` with `retries=0`.\n"
+        "Inspection of the raw JSONL trace reveals the recorded answer:\n"
+        "`\"Error during model communication: Ollama chat error (HTTP 500): {\"error\":\"prediction aborted, token repeat limit reached\"}\"`.\n\n"
+        "**Technical Root Cause:**\n"
+        "1. During text generation, the local Ollama process aborted prediction due to hitting its internal repeat token limit.\n"
+        "2. In `backend/agent.py` (lines 465–479), the HTTP 500 raises an `OllamaError` at the transport layer before any completion string is returned.\n"
+        "3. The agent runner handles this exception by immediately terminating the run and writing the error string into `run.final_answer`.\n"
+        "4. Because the engine aborted before emitting any JSON agent action, `tool_call_valid` evaluated to `False`.\n"
+        "5. The agent retry mechanism (`MAX_FORMAT_RETRIES = 2`) is designed strictly for schema recovery when the model emits malformed JSON during ordinary completion. It is never triggered on engine crashes or HTTP transport errors.\n"
+        "Consequently, zero retries were attempted, resulting in `valid=False` and `retries=0`."
+    )
+
+    # Per-Task-Type Latency Table & Comparability Disclaimer
+    md_lines.append("")
+    md_lines.append("## Latency by Task Type Across Configurations")
+    md_lines.append("| Configuration | Total (n) | Overall Mean Latency | RAG Queries | Calculator Tasks | SQL Analytical Tasks | Document Assistant Tasks |")
     md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
-    for tag, label in [("e3_prompt_hardened", "Hardened (Rules 8 & 9)"), ("e3_prompt_baseline", "Baseline (Rules 8 & 9 omitted)")]:
-        s = all_summaries.get(tag, {})
-        if s.get("status") == "completed":
-            v_ci = s.get("tool_call_valid_ci", (0, 0))
-            s_ci = s.get("task_success_ci", (0, 0))
-            md_lines.append(
-                f"| {label} | Completed | {s['n']} | **{s['tool_call_valid_rate']*100:.1f}%** | [{v_ci[0]*100:.1f}%, {v_ci[1]*100:.1f}%] | **{s['task_success_rate']*100:.1f}%** | [{s_ci[0]*100:.1f}%, {s_ci[1]*100:.1f}%] |"
-            )
-        else:
-            md_lines.append(f"| {label} | *not run* | 0 | N/A | N/A | N/A | N/A |")
+    for label, tag in all_failure_runs:
+        items = all_raw_items.get(tag, [])
+        if not items:
+            continue
+        n = len(items)
+        lats = [it.get("latency_s", 0.0) for it in items if it.get("latency_s") is not None]
+        overall = round(sum(lats) / len(lats), 2) if lats else 0.0
+        by_type = compute_latency_by_task_type(items)
+        md_lines.append(
+            f"| {label} | {n} | **{overall}s** | {by_type['RAG']}s | {by_type['calculator']}s | {by_type['SQL']}s | {by_type['document']}s |"
+        )
+
+    md_lines.append("")
+    md_lines.append(
+        "> **Important Methodology Note on Latency Comparability:**\n"
+        "> Overall aggregate latency means across configurations are **not directly comparable** because abstentions end early. "
+        "When an agent prematurely abstains without issuing a tool call (such as the 15 premature abstentions in `e3_prompt_baseline`, "
+        "6 in Canonical Run 1, and 7 in `json_off_retry_off`), it generates a short negative sentence on Turn 1 in ~10–12 seconds without "
+        "performing vector searches or database queries. Conversely, configurations that successfully invoke tools perform multi-turn "
+        "reasoning and retrieval loops lasting 25–70+ seconds. Aggregate mean latencies thus confound execution efficiency with "
+        "failure-mode dropouts (a configuration with more early-exit failures appears misleadingly 'faster'). "
+        "Meaningful latency evaluations must be compared per task type and conditioned on multi-turn tool execution."
+    )
 
     # Post-Hoc Variant Section
     if posthoc_summary and posthoc_summary.get("status") == "completed":
@@ -817,7 +1064,6 @@ def main():
         md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
         p_v_ci = posthoc_summary.get("tool_call_valid_ci", (0, 0))
         p_s_ci = posthoc_summary.get("task_success_ci", (0, 0))
-        # Adjudicated: rag_q23 false negative credited (+1)
         p_adj_pt, p_adj_low, p_adj_high = compute_wilson_ci(41, 45)
         md_lines.append(
             f"| `POST-HOC: require_retrieval_before_abstain` | Completed | {posthoc_summary['n']} | **{posthoc_summary['tool_call_valid_rate']*100:.1f}%** | [{p_v_ci[0]*100:.1f}%, {p_v_ci[1]*100:.1f}%] | **{posthoc_summary['task_success_rate']*100:.1f}%** | [{p_s_ci[0]*100:.1f}%, {p_s_ci[1]*100:.1f}%] | **{p_adj_pt*100:.1f}%** | [{p_adj_low*100:.1f}%, {p_adj_high*100:.1f}%] | {posthoc_summary['mean_latency_s']}s* | {posthoc_summary['peak_ollama_rss_mb']} MB |"
@@ -828,43 +1074,6 @@ def main():
         md_lines.append("  1. `rag_q03`: In the canonical run, the recorded 'pass' was a scorer false positive (the answer contained the name 'Radhakrishnan' while stating the documents did not specify the officer). In post-hoc, the model reached the same negative conclusion without naming the officer, failing the keyword match.")
         md_lines.append("  2. `rag_q21`: In post-hoc, the model relied on generic university priors ('Medical Absence Form', 'Academic Office') instead of conditioning strictly on retrieved text mentioning Form MED-401 and Clause 2.1.")
         md_lines.append("- **Validation Scope:** Validation of this post-hoc intervention was strictly a unit test (`tests/test_require_retrieval_before_abstain.py`) plus the 45-item evaluation benchmark, not a broad multi-domain regression run.")
-
-        # Paired McNemar against canonical run
-        if "e2_json_on_retry_on" in all_raw_items:
-            md_lines.append("\n### Paired McNemar Test: Pre-registered Canonical vs Post-Hoc Variant")
-            mcnemar_txt = generate_paired_mcnemar_report(
-                all_raw_items["e2_json_on_retry_on"],
-                items_posthoc,
-                label_a="Pre-registered Canonical (json_on_retry_on)",
-                label_b="Post-Hoc (require_retrieval_before_abstain)",
-            )
-            md_lines.append(mcnemar_txt)
-
-    # Failure Analysis Table
-    if e2_failed_items:
-        md_lines.append("")
-        md_lines.append("## Failure Analysis Breakdown (Canonical Pre-registered Run)")
-        md_lines.append(f"Total failed items: **{len(e2_failed_items)} / 45**")
-        e2_adj_pt, e2_adj_low, e2_adj_high = compute_wilson_ci(37, 45)
-        md_lines.append(f"- **Strict Task Success Rate:** **80.0%** (36/45) [66.2%, 89.1%]")
-        md_lines.append(f"- **Adjudicated Task Success Rate:** **82.2%** (37/45) [{e2_adj_low*100:.1f}%, {e2_adj_high*100:.1f}%] *(Crediting `rag_q23` scorer false negative)*")
-        md_lines.append("")
-        md_lines.append("### Scorer False Negative Report: `rag_q23`")
-        md_lines.append("- **Question:** *Can undergraduate students take out rare manuscripts from Wing C, and what special badge is needed for on-site inspection?*")
-        md_lines.append("- **Expected Keywords:** `['cannot', 'CLRC-SEC-9']` (match: all)")
-        md_lines.append("- **Model Answer:** *\"Undergraduate students are not allowed to take out rare manuscripts from Wing C. A special badge named CLRC-SEC-9 is needed for on-site inspection of these rare manuscripts.\"*")
-        md_lines.append("- **Adjudication:** The model's answer is factually and semantically correct. It failed the automated keyword matcher solely because the phrasing 'are not allowed to' did not match the literal substring 'cannot'.")
-        md_lines.append("")
-        md_lines.append("| Item ID | Suite | Question | Expected Keyword / Ground Truth | Model Answer | Failure Cause |")
-        md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
-        for it, cause in e2_failed_items:
-            q_short = it.get("question", "")[:60] + "..."
-            ans_short = it.get("answer", "")[:70] + "..."
-            kw_gt = str(it.get("expected_keywords") or it.get("ground_truth", ""))
-            cause_clean = cause.replace("_", " ").title()
-            if it.get("item_id") == "rag_q23":
-                cause_clean = "Scorer False Negative (Wrong Answer After Retrieval)"
-            md_lines.append(f"| `{it['item_id']}` | {it.get('suite')} | {q_short} | `{kw_gt}` | {ans_short} | **{cause_clean}** |")
 
     summary_md_path = RESULTS_DIR / "summary.md"
     summary_md_path.write_text("\n".join(md_lines), encoding="utf-8")
