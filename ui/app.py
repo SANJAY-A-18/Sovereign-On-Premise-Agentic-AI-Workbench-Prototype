@@ -77,11 +77,12 @@ st.markdown("""
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 5px 12px;
+        padding: 6px 14px;
         border-radius: 9999px;
-        font-size: 0.75rem;
+        font-size: 0.78rem;
         font-weight: 600;
         letter-spacing: 0.025em;
+        white-space: nowrap;
         text-transform: uppercase;
     }
 
@@ -210,7 +211,7 @@ if health_data and "ollama" in health_data:
     ollama_online = ollama_info.get("reachable", False)
     ollama_model_name = ollama_info.get("configured_chat_model", "mistral")
 
-header_col1, header_col2 = st.columns([3, 1])
+header_col1, header_col2 = st.columns([2, 1])
 
 with header_col1:
     st.markdown("""
@@ -227,12 +228,12 @@ with header_col1:
 with header_col2:
     if ollama_online:
         st.markdown(
-            f'<div style="text-align: right;"><span class="status-pill status-pill-online">🟢 Host Ollama Online ({ollama_model_name})</span></div>',
+            f'<div style="display: flex; justify-content: flex-end; align-items: center; padding-top: 0.5rem;"><span class="status-pill status-pill-online">🟢 Host Ollama Online ({ollama_model_name})</span></div>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            '<div style="text-align: right;"><span class="status-pill status-pill-offline">🔴 Host Ollama Offline</span></div>',
+            '<div style="display: flex; justify-content: flex-end; align-items: center; padding-top: 0.5rem;"><span class="status-pill status-pill-offline">🔴 Host Ollama Offline</span></div>',
             unsafe_allow_html=True,
         )
 
@@ -358,11 +359,35 @@ with tab_dict["💬 Chat"]:
                                     status = res_data.get("status")
 
                                     if status == "completed":
-                                        st.success("✅ Run Completed Successfully")
+                                        recovered = res_data.get("recovered_tool_error", False)
+                                        run_id = res_data.get("run_id")
+                                        if not recovered and run_id:
+                                            try:
+                                                run_detail_res = requests.get(f"{BACKEND_URL}/runs/{run_id}", headers=get_auth_headers(), timeout=3.0)
+                                                if run_detail_res.status_code == 200:
+                                                    steps = run_detail_res.json().get("steps", [])
+                                                    has_tool_err = any(s.get("step_type") == "tool" and "Tool Execution Error" in (s.get("output_data") or "") for s in steps)
+                                                    has_retry = any(s.get("step_type") == "retry" for s in steps)
+                                                    if has_tool_err or has_retry:
+                                                        recovered = True
+                                            except Exception:
+                                                pass
+
+                                        if recovered:
+                                            st.warning("⚠️ Completed with a recovered tool error")
+                                        else:
+                                            st.success("✅ Run Completed Successfully")
+
                                         st.markdown("### Answer")
                                         st.markdown(res_data.get("answer", ""))
 
-                                        sources = res_data.get("sources", [])
+                                        raw_sources = res_data.get("sources", [])
+                                        # Tool errors are shown in the trace only (not under Citations)
+                                        sources = [
+                                            src for src in raw_sources
+                                            if not src.startswith("Tool Execution Error")
+                                            and "tool execution error" not in src.lower()
+                                        ]
                                         if sources:
                                             st.markdown("#### 📚 Citations & Sources")
                                             for src in sources:
@@ -402,9 +427,13 @@ with tab_dict["📂 Documents"]:
     else:
         st.markdown("Upload documents (PDF, DOCX, TXT) into the local sovereign vector knowledge base.")
 
+        if "doc_uploader_key" not in st.session_state:
+            st.session_state.doc_uploader_key = 0
+
         uploaded_file = st.file_uploader(
             "Choose a file to ingest",
             type=["pdf", "docx", "txt"],
+            key=f"doc_uploader_{st.session_state.doc_uploader_key}",
             help="Files are stored natively in ./data/uploads and embedded into ChromaDB with zero network calls.",
         )
 
@@ -421,6 +450,7 @@ with tab_dict["📂 Documents"]:
                         )
                         if up_res.status_code == 200:
                             data = up_res.json()
+                            st.session_state.doc_uploader_key += 1
                             st.success(f"✅ Successfully ingested '{data.get('filename')}' ({data.get('chunks')} chunks).")
                             st.rerun()
                         else:

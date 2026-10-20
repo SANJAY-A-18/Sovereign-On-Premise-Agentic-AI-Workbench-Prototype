@@ -24,6 +24,7 @@ eval/.workdir/
 # Review and backup folders
 _to_review/
 backups/
+data_backup/
 
 # Testing & coverage
 .coverage

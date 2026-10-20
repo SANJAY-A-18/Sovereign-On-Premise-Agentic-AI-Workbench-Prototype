@@ -457,3 +457,44 @@ As hardware budgets permit (e.g., workstations with 16 GB+ RAM or dedicated VRAM
 2. **Automated Prompt Tuning:** Formally compare chain-of-thought system prompts against direct tool instruction prompts.
 3. **Hybrid Sparse + Dense Retrieval:** Introduce BM25 lexical ranking alongside `nomic-embed-text` dense vector embeddings for hybrid retrieval.
 4. **Engine Error Recovery:** Retry or recover on Ollama token-repeat HTTP 500 aborts (such as resetting the context window or backoff/temperature adjustment upon encountering `prediction aborted, token repeat limit reached`). This was not implemented in the benchmarked system; doing so now would constitute an unmeasured post-hoc modification.
+
+---
+
+## 11. Post-Evaluation Fixes (Post-eval-v1)
+
+> [!NOTE]
+> **Baseline Integrity Notice:** All baseline benchmark results, confidence intervals, and frozen datasets reported in Sections 1–8 represent the evaluated system at Git tag `eval-v1`. The modifications detailed below represent post-evaluation bug fixes and refinements identified during manual UI testing. No test sets were altered, no baseline results were overwritten, and no tuning against evaluation questions was performed.
+
+### 11.1 Bug Fix 1: Tool Argument Wrapper Key Normalization
+- **What:** Implemented recursive unwrapping (`unwrap_tool_args` and `normalize_tool_args` in `backend/agent.py`) supporting wrapper keys `args`, `arguments`, `parameters`, `params`, `input` (whether passed as Python dictionaries or JSON-encoded strings, with or without trailing colons such as `args:`), alongside canonical parameter mapping across all registered tools.
+- **Why:** During manual UI interaction, small models (`qwen2.5:3b`) emitted tool call JSON with wrapper keys such as `{"action": "search_documents", "args:": {"query": "..."}}` or `{"tool": "search_documents", "args": {"args": {"query": "..."}}}`, which previously caused Python to raise `TypeError: search_documents() got an unexpected keyword argument 'args:'`.
+- **Investigation & Evidence (Read-Only Search):**
+  - **`eval/results/*.jsonl` (13 files):** Exactly **0 occurrences** of `unexpected keyword argument`. Evaluation JSONL logs record final answers and top-level outcomes; runs where the model recovered in a subsequent turn recorded the final answer rather than intermediate step exceptions.
+  - **`eval/.workdir/sovereign.db`:** Exactly **152 step occurrences across 152 distinct runs** where the model emitted `{"action": "search_documents", "args:": ...}`, generating an intermediate `Tool Execution Error: search_documents() got an unexpected keyword argument 'args:'` at Step #3. In inspected traces (e.g. Run #228), the model observed the error and self-corrected in Step #4 by emitting `{"action": "search_documents", "args": ...}`, succeeding at the expense of 2 additional reasoning turns and latency.
+  - **`data/sovereign.db`:** Exactly **6 step occurrences across 6 runs**.
+  - **`data_backup/sovereign.db`:** Exactly **2 step occurrences across 2 runs**.
+- **Verification:** Unit tests in `tests/test_agent_parsing.py` verify all 17 wrapper shapes (including JSON strings, colon suffixes, and nested dicts). Regression tests using the exact queries `"How many days can I borrow a book and what is the overdue fine?"` and `"What is the hostel curfew time?"` against `sample_policy.txt` pass cleanly with zero tool errors.
+
+### 11.2 Refinement 2: Boundary-Preserving Text Chunker
+- **What:** Replaced the character-slicing chunker in `backend/rag.py` (`TextChunker.chunk_text`) with a boundary-preserving algorithm that prioritizes paragraph breaks (`\n\n`), line breaks (`\n`), sentence boundaries (`. `, `? `, `! `), and word boundaries, never splitting mid-word while honoring `chunk_size` and `chunk_overlap`.
+- **Why:** The previous chunker sliced text blindly at character offsets (`cleaned_text[start:start+size]`), bisecting words mid-token (e.g., splitting `"Hall tickets"` into `"Hall ti"` and `"ety goggles"` in `sample_policy.txt`), degrading semantic embeddings and precision.
+- **Empirical Evidence (Retrieval-Only E1b Comparative Evaluation):**
+  Post-evaluation retrieval-only benchmarks were run across the 18-document distractor corpus ($n = 24$ answerable items) for chunk sizes 300, 500, and 800 characters without modifying frozen data:
+
+| Chunk Size | Baseline Chunk Hit@1 (`eval-v1`) | Post-Eval Chunk Hit@1 (`fixes`) | Baseline Chunk Hit@3 (`eval-v1`) | Post-Eval Chunk Hit@3 (`fixes`) | Baseline MRR (`eval-v1`) | Post-Eval MRR (`fixes`) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **300 chars** | 75.0% (18/24) | **83.3%** (20/24, +8.3%) | 87.5% (21/24) | **100.0%** (24/24, +12.5%) | 0.8056 | **0.9097** (+0.1041) |
+| **500 chars** | 75.0% (18/24) | **95.8%** (23/24, +20.8%) | 91.7% (22/24) | **100.0%** (24/24, +8.3%) | 0.8333 | **0.9792** (+0.1459) |
+| **800 chars** | 83.3% (20/24) | **83.3%** (20/24, unchanged) | 95.8% (23/24) | **100.0%** (24/24, +4.2%) | 0.8889 | **0.8958** (+0.0069) |
+
+- **Key Takeaways:**
+  1. **100.0% Top-3 Recall:** With word and sentence integrity preserved, Chunk Hit@3 reached 100.0% (24/24) across all chunk sizes.
+  2. **Substantial Precision Gain at 500 chars:** Chunk Hit@1 increased from 75.0% to 95.8% (23/24), and MRR jumped from 0.8333 to 0.9792, demonstrating that avoiding mid-clause cuts allows dense embeddings to match queries directly to the top-ranked chunk.
+
+### 11.3 UI Fixes: Citations, Status, Badge Clipping & Uploader Reset
+- **What & Why:**
+  1. **Citations Filtering:** Tool execution errors are now strictly excluded from the "Citations & Sources" panel and only rendered in the execution trace under the **Traces** tab.
+  2. **Recovered Status Display:** The Chat interface displays `⚠️ Completed with a recovered tool error` whenever an intermediate tool failure or format retry occurred but the agent subsequently finalized successfully.
+  3. **Ollama Status Badge:** Adjusted header columns to `[2, 1]` and applied `white-space: nowrap` with `0.78rem` font size to `.status-pill`, eliminating badge clipping on laptop resolutions.
+  4. **Document Uploader Reset:** Added dynamic session-state widget keying (`doc_uploader_key`) so the Streamlit file uploader resets to empty after successful document ingestion.
+

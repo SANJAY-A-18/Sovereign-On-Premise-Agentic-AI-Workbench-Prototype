@@ -82,79 +82,260 @@ def extract_json_from_llm(raw: str) -> Dict[str, Any]:
     raise ValueError("Extracted JSON root is not an object/dictionary.")
 
 
+WRAPPER_KEYS = {"args", "arguments", "parameters", "params", "input"}
+
+
+def unwrap_tool_args(args: Any, tool_name: Optional[str] = None) -> Any:
+    """
+    Recursively unwrap wrapper keys (args, arguments, parameters, params, input),
+    whether provided as dictionaries or JSON strings, including keys with trailing colons.
+    """
+    clean_tool = (tool_name or "").strip().lower()
+
+    # Step 1: If args is a string, try JSON parsing
+    if isinstance(args, str):
+        cleaned_str = args.strip()
+        if (cleaned_str.startswith("{") and cleaned_str.endswith("}")) or (cleaned_str.startswith("[") and cleaned_str.endswith("]")):
+            try:
+                parsed = json.loads(cleaned_str)
+                return unwrap_tool_args(parsed, tool_name=clean_tool)
+            except Exception:
+                pass
+        # Raw non-JSON string for a tool
+        if clean_tool == "calculator":
+            return {"expression": cleaned_str}
+        elif clean_tool == "read_file":
+            return {"filename": cleaned_str}
+        elif clean_tool in ("search_documents", "read_sql"):
+            return {"query": cleaned_str}
+        return {"query": cleaned_str}
+
+    if not isinstance(args, dict):
+        return {}
+
+    current = dict(args)
+
+    # Unwrap if current contains wrapper keys
+    max_depth = 5
+    for _ in range(max_depth):
+        if not isinstance(current, dict):
+            break
+
+        # Check if single key is a wrapper key
+        if len(current) == 1:
+            k = next(iter(current.keys()))
+            norm_k = k.strip().rstrip(":").strip().lower()
+            if norm_k in WRAPPER_KEYS:
+                val = current[k]
+                if isinstance(val, str):
+                    try:
+                        parsed_val = json.loads(val.strip())
+                        if isinstance(parsed_val, dict):
+                            current = parsed_val
+                            continue
+                        elif isinstance(parsed_val, (int, float, bool)):
+                            val = str(parsed_val)
+                    except Exception:
+                        pass
+                    if clean_tool == "calculator":
+                        return {"expression": str(val)}
+                    elif clean_tool == "read_file":
+                        return {"filename": str(val)}
+                    else:
+                        return {"query": str(val)}
+                elif isinstance(val, dict):
+                    current = val
+                    continue
+                else:
+                    return {}
+            else:
+                break
+        else:
+            # Check if there are metadata keys like action, tool, thought alongside a single wrapper key
+            wrapper_candidates = [
+                k for k in current.keys()
+                if k.strip().rstrip(":").strip().lower() in WRAPPER_KEYS
+            ]
+            non_wrapper = [
+                k for k in current.keys()
+                if k not in wrapper_candidates
+            ]
+            if len(wrapper_candidates) == 1 and all(k.strip().lower() in ("action", "tool", "name", "thought") for k in non_wrapper):
+                val = current[wrapper_candidates[0]]
+                if isinstance(val, str):
+                    try:
+                        parsed_val = json.loads(val.strip())
+                        if isinstance(parsed_val, dict):
+                            current = parsed_val
+                            continue
+                    except Exception:
+                        pass
+                    if clean_tool == "calculator":
+                        return {"expression": str(val)}
+                    elif clean_tool == "read_file":
+                        return {"filename": str(val)}
+                    else:
+                        return {"query": str(val)}
+                elif isinstance(val, dict):
+                    current = val
+                    continue
+            break
+
+    return current
+
+
+def normalize_tool_args(tool_name: str, args: Any) -> Dict[str, Any]:
+    """
+    Unwraps and normalizes tool arguments to guarantee matching signature for tool functions.
+    Never passes wrapper keys like 'args', 'parameters', etc. to the underlying tool function.
+    """
+    clean_tool = (tool_name or "").strip().lower()
+    unwrapped = unwrap_tool_args(args, tool_name=clean_tool)
+
+    if not isinstance(unwrapped, dict):
+        unwrapped = {}
+    else:
+        unwrapped = dict(unwrapped)
+
+    # Normalize tool parameter names
+    if clean_tool == "search_documents":
+        if "query" not in unwrapped:
+            for alt in ["question", "text", "search", "expression", "prompt", "input", "query:"]:
+                if alt in unwrapped:
+                    val = unwrapped.pop(alt)
+                    if isinstance(val, dict):
+                        sub = normalize_tool_args(clean_tool, val)
+                        if "query" in sub:
+                            unwrapped["query"] = sub["query"]
+                            break
+                    unwrapped["query"] = str(val)
+                    break
+        # If any wrapper key still lingers, unwrap it
+        for wk in list(unwrapped.keys()):
+            if wk.strip().rstrip(":").strip().lower() in WRAPPER_KEYS and wk != "query":
+                nested = unwrapped.pop(wk)
+                if isinstance(nested, dict):
+                    for nk, nv in nested.items():
+                        if nk not in unwrapped:
+                            unwrapped[nk] = nv
+                elif isinstance(nested, str) and "query" not in unwrapped:
+                    unwrapped["query"] = nested
+
+    elif clean_tool == "calculator":
+        if "expression" not in unwrapped:
+            for alt in ["query", "input", "calc", "math", "question", "expr", "expression:"]:
+                if alt in unwrapped:
+                    val = unwrapped.pop(alt)
+                    if isinstance(val, dict):
+                        sub = normalize_tool_args(clean_tool, val)
+                        if "expression" in sub:
+                            unwrapped["expression"] = sub["expression"]
+                            break
+                    unwrapped["expression"] = str(val)
+                    break
+        for wk in list(unwrapped.keys()):
+            if wk.strip().rstrip(":").strip().lower() in WRAPPER_KEYS and wk != "expression":
+                nested = unwrapped.pop(wk)
+                if isinstance(nested, dict):
+                    for nk, nv in nested.items():
+                        if nk not in unwrapped:
+                            unwrapped[nk] = nv
+                elif isinstance(nested, str) and "expression" not in unwrapped:
+                    unwrapped["expression"] = nested
+
+    elif clean_tool == "read_sql":
+        if "query" not in unwrapped:
+            for alt in ["sql", "statement", "command", "expression", "input", "query:"]:
+                if alt in unwrapped:
+                    val = unwrapped.pop(alt)
+                    if isinstance(val, dict):
+                        sub = normalize_tool_args(clean_tool, val)
+                        if "query" in sub:
+                            unwrapped["query"] = sub["query"]
+                            break
+                    unwrapped["query"] = str(val)
+                    break
+        for wk in list(unwrapped.keys()):
+            if wk.strip().rstrip(":").strip().lower() in WRAPPER_KEYS and wk != "query":
+                nested = unwrapped.pop(wk)
+                if isinstance(nested, dict):
+                    for nk, nv in nested.items():
+                        if nk not in unwrapped:
+                            unwrapped[nk] = nv
+                elif isinstance(nested, str) and "query" not in unwrapped:
+                    unwrapped["query"] = nested
+
+    elif clean_tool == "read_file":
+        if "filename" not in unwrapped:
+            for alt in ["file_path", "path", "filename", "file", "target", "input", "filename:"]:
+                if alt in unwrapped:
+                    val = unwrapped.pop(alt)
+                    if isinstance(val, dict):
+                        sub = normalize_tool_args(clean_tool, val)
+                        if "filename" in sub:
+                            unwrapped["filename"] = sub["filename"]
+                            break
+                    unwrapped["filename"] = str(val)
+                    break
+        for wk in list(unwrapped.keys()):
+            if wk.strip().rstrip(":").strip().lower() in WRAPPER_KEYS and wk != "filename":
+                nested = unwrapped.pop(wk)
+                if isinstance(nested, dict):
+                    for nk, nv in nested.items():
+                        if nk not in unwrapped:
+                            unwrapped[nk] = nv
+                elif isinstance(nested, str) and "filename" not in unwrapped:
+                    unwrapped["filename"] = nested
+
+    return unwrapped
+
+
 def validate_agent_action(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """
     Validates that the parsed JSON strictly conforms to the agent protocol:
     Either {"action": "tool", "tool": "<name>", "args": {...}}
     Or     {"action": "final", "answer": "<text>"}
-    Forgiving for small model variations (e.g. putting tool name in action).
+    Forgiving for small model variations (e.g. putting tool name in action or wrapping args).
     """
+    if "function" in data and isinstance(data["function"], dict):
+        data = dict(data["function"])
+    elif "tool_call" in data and isinstance(data["tool_call"], dict):
+        data = dict(data["tool_call"])
+
     action = data.get("action")
     if not action:
-        if data.get("tool"):
+        if data.get("tool") or data.get("name"):
             action = "tool"
         elif data.get("answer") is not None:
             action = "final"
         else:
-            raise ValueError("Missing 'action' field in JSON. Must be 'tool' or 'final'.")
+            from backend.tools import tool_registry
+            for k in data.keys():
+                if tool_registry.get(k.lower().strip()) is not None:
+                    action = k.lower().strip()
+                    break
+            if not action:
+                raise ValueError("Missing 'action' field in JSON. Must be 'tool' or 'final'.")
 
     action = str(action).lower().strip()
     if action == "tool":
-        tool_name = data.get("tool")
+        tool_name = data.get("tool") or data.get("name")
         if not tool_name or not isinstance(tool_name, str):
             raise ValueError("Tool action must specify a 'tool' string name.")
-        args = data.get("args")
-        if args is None:
-            for k in ["args:", "arguments", "parameters", "params", "input"]:
-                if k in data and isinstance(data[k], dict):
-                    args = data[k]
-                    break
-        if args is None:
-            args = data.get("args", {})
-        if not isinstance(args, dict):
-            # If args passed as string or list, try converting
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except Exception:
-                    args = {"query": args}
-            else:
-                args = {}
-        if not args:
-            reserved = {"action", "tool", "thought", "args", "args:", "arguments", "parameters"}
+
+        raw_args = None
+        for k in ["args", "args:", "arguments", "arguments:", "parameters", "parameters:", "params", "params:", "input", "input:"]:
+            if k in data:
+                raw_args = data[k]
+                break
+
+        if raw_args is None:
+            reserved = {"action", "tool", "name", "thought", "args", "args:", "arguments", "parameters", "params", "input"}
             fallback_args = {k: v for k, v in data.items() if k not in reserved}
-            if fallback_args:
-                args = fallback_args
+            raw_args = fallback_args if fallback_args else {}
 
-        # If args is wrapped in a single key like {"args:": {...}} or {"arguments": {...}}
-        if isinstance(args, dict) and len(args) == 1:
-            k = next(iter(args.keys()))
-            if k.rstrip(":") in ("args", "arguments", "parameters", "params") and isinstance(args[k], dict):
-                args = args[k]
-
-        # Normalize common tool parameter names
-        clean_tool = tool_name.strip()
-        if clean_tool == "search_documents" and "query" not in args:
-            for alt in ["question", "text", "search", "expression", "prompt"]:
-                if alt in args:
-                    args["query"] = args.pop(alt)
-                    break
-        elif clean_tool == "calculator" and "expression" not in args:
-            for alt in ["query", "input", "calc", "math", "question"]:
-                if alt in args:
-                    args["expression"] = args.pop(alt)
-                    break
-        elif clean_tool == "read_sql" and "query" not in args:
-            for alt in ["sql", "statement", "command", "expression", "input"]:
-                if alt in args:
-                    args["query"] = args.pop(alt)
-                    break
-        elif clean_tool == "read_file" and "file_path" not in args:
-            for alt in ["path", "filename", "file", "target"]:
-                if alt in args:
-                    args["file_path"] = args[alt]
-                    break
-        return "tool", {"tool": clean_tool, "args": args}
+        normalized_args = normalize_tool_args(tool_name.strip(), raw_args)
+        return "tool", {"tool": tool_name.strip(), "args": normalized_args}
 
     elif action == "final":
         answer = data.get("answer")
@@ -167,42 +348,19 @@ def validate_agent_action(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         from backend.tools import tool_registry
         if tool_registry.get(action) is not None:
             tool_name = action
-            args = data.get("args", {})
-            if not isinstance(args, dict):
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {"expression": args} if action == "calculator" else {"query": args}
-                else:
-                    args = {}
-            if not args:
-                reserved = {"action", "tool", "thought", "args"}
+            raw_args = None
+            for k in ["args", "args:", "arguments", "arguments:", "parameters", "parameters:", "params", "params:", "input", "input:"]:
+                if k in data:
+                    raw_args = data[k]
+                    break
+
+            if raw_args is None:
+                reserved = {"action", "tool", "name", "thought", "args", "args:", "arguments", "parameters", "params", "input"}
                 fallback_args = {k: v for k, v in data.items() if k not in reserved}
-                if fallback_args:
-                    args = fallback_args
-            clean_tool = tool_name.strip()
-            if clean_tool == "search_documents" and "query" not in args:
-                for alt in ["question", "text", "search", "expression", "prompt"]:
-                    if alt in args:
-                        args["query"] = args.pop(alt)
-                        break
-            elif clean_tool == "calculator" and "expression" not in args:
-                for alt in ["query", "input", "calc", "math", "question"]:
-                    if alt in args:
-                        args["expression"] = args.pop(alt)
-                        break
-            elif clean_tool == "read_sql" and "query" not in args:
-                for alt in ["sql", "statement", "command", "expression", "input"]:
-                    if alt in args:
-                        args["query"] = args.pop(alt)
-                        break
-            elif clean_tool == "read_file" and "file_path" not in args:
-                for alt in ["path", "filename", "file", "target"]:
-                    if alt in args:
-                        args["file_path"] = args.pop(alt)
-                        break
-            return "tool", {"tool": clean_tool, "args": args}
+                raw_args = fallback_args if fallback_args else {}
+
+            normalized_args = normalize_tool_args(tool_name.strip(), raw_args)
+            return "tool", {"tool": tool_name.strip(), "args": normalized_args}
 
         raise ValueError(f"Unrecognized action '{action}'. Must be 'tool' or 'final'.")
 
@@ -369,6 +527,8 @@ class AgentRunner:
         ]
 
         sources_used = []
+        had_tool_error = any(st.step_type == "tool" and "Tool Execution Error" in (st.output_data or "") for st in existing_steps)
+        had_retry = any(st.step_type == "retry" for st in existing_steps)
 
         # Replay completed steps into messages
         for st in existing_steps:
@@ -378,7 +538,7 @@ class AgentRunner:
                 messages.append(
                     {"role": "user", "content": f"Tool Observation ({st.input_data}):\n{st.output_data}"}
                 )
-                if "Source:" in st.output_data or "search_documents" in st.input_data:
+                if ("Source:" in (st.output_data or "") or "search_documents" in (st.input_data or "")) and not (st.output_data or "").startswith("Tool Execution Error"):
                     sources_used.append(st.output_data)
 
         # Check if there was an approval recently decided that needs execution
@@ -504,6 +664,7 @@ class AgentRunner:
                 parse_error = str(e)
 
             while parse_error and retry_count < max_retries:
+                had_retry = True
                 retry_count += 1
                 step_counter += 1
                 retry_start = time.time()
@@ -597,12 +758,13 @@ class AgentRunner:
                     "answer": final_answer,
                     "sources": sources_used,
                     "run_id": run.id,
+                    "recovered_tool_error": had_tool_error or had_retry,
                 }
 
             # Step 4: Handle Tool Action
             elif action_type == "tool":
                 tool_name = action_data["tool"]
-                tool_args = action_data["args"]
+                tool_args = normalize_tool_args(tool_name, action_data.get("args", {}))
 
                 # Guard against repeated identical tool calls causing loop thrashing
                 current_call_signature = (tool_name, json.dumps(tool_args, sort_keys=True))
@@ -664,10 +826,12 @@ class AgentRunner:
                     step_counter += 1
                     t_exec_start = time.time()
                     tool_obj = tool_registry.get(tool_name)
+                    tool_args = normalize_tool_args(tool_name, tool_args)
                     try:
                         tool_result = str(tool_obj.func(**tool_args))
                     except Exception as e:
                         tool_result = f"Tool Execution Error: {str(e)}"
+                        had_tool_error = True
 
                     t_exec_lat = (time.time() - t_exec_start) * 1000
                     record_step(
@@ -680,7 +844,7 @@ class AgentRunner:
                         latency_ms=t_exec_lat,
                     )
 
-                    if "Source:" in tool_result or tool_name == "search_documents":
+                    if ("Source:" in tool_result or tool_name == "search_documents") and not tool_result.startswith("Tool Execution Error"):
                         sources_used.append(tool_result)
 
                     messages.append({
@@ -703,4 +867,5 @@ class AgentRunner:
             "answer": fallback_msg,
             "sources": sources_used,
             "run_id": run.id,
+            "recovered_tool_error": had_tool_error or had_retry,
         }
