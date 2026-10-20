@@ -4,28 +4,38 @@ Sovereign On-Premise Agentic AI Workbench - Live Acceptance & Demo Verification 
 
 Verifies end-to-end functionality against a running stack (Docker Compose or local uvicorn):
 1. [PASS/FAIL] /health endpoint (native host Ollama reachability + required models present)
-2. [PASS/FAIL] Admin user registration / authentication (password from env/prompt, NEVER hardcoded)
+2. [PASS/FAIL] Register demo user (asserts first user is admin on fresh data dir; never hardcoded password)
 3. [PASS/FAIL] Sample document upload & RAG chunk ingestion into ChromaDB
 4. [PASS/FAIL] Document Assistant RAG retrieval question with citation verification
-5. [PASS/FAIL] Calculator arithmetic question execution
+5. [PASS/FAIL] Calculator arithmetic question execution (asserts calculator tool called from run trace)
+
+Note: Always uses a temporary SOVEREIGN_DATA_DIR when spawning the backend to guarantee
+the real repository 'data/' directory is never touched during demo/acceptance verification.
 
 Usage:
-    # Pass password via environment variable (recommended for automated runs):
+    # Against active stack (Docker Compose or running backend):
     ADMIN_PASSWORD="SecurePassword123!" python scripts/demo_check.py
 
     # Or provide via CLI argument:
     python scripts/demo_check.py --password "SecurePassword123!"
 
-    # Or run interactively (will prompt securely for password):
-    python scripts/demo_check.py
+    # Or spawn a standalone backend on a temporary SOVEREIGN_DATA_DIR:
+    python scripts/demo_check.py --spawn-backend --password "SecurePassword123!"
 """
 
 import os
 import sys
+import time
+import socket
 import getpass
 import argparse
-from typing import Dict, Any, Optional
+import tempfile
+import subprocess
+from pathlib import Path
+from typing import Dict, Any, Optional, Tuple
 import httpx
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Colors:
@@ -71,7 +81,22 @@ Destructive actions and analytical SQL inspections against production databases 
 """
 
 
-def run_demo_check(base_url: str, username: str, password: str) -> bool:
+def is_port_open(host: str, port: int) -> bool:
+    """Check if a network port is accepting connections."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            return s.connect_ex((host, port)) == 0
+    except Exception:
+        return False
+
+
+def run_demo_check(
+    base_url: str,
+    username: str,
+    password: str,
+    is_fresh_data_dir: bool = False
+) -> bool:
     all_passed = True
     client = httpx.Client(base_url=base_url, timeout=120.0)
 
@@ -79,6 +104,7 @@ def run_demo_check(base_url: str, username: str, password: str) -> bool:
     print(" SOVEREIGN WORKBENCH ACCEPTANCE & DEMO VERIFICATION")
     print(f" Target Backend: {base_url}")
     print(f" User: {username}")
+    print(f" Fresh Data Dir Assertion: {is_fresh_data_dir}")
     print("=" * 70)
 
     token = None
@@ -121,7 +147,7 @@ def run_demo_check(base_url: str, username: str, password: str) -> bool:
         return False
 
     # --------------------------------------------------------------------------
-    # Step 2: Admin Registration / Authentication
+    # Step 2: Register demo user
     # --------------------------------------------------------------------------
     try:
         reg_resp = client.post("/auth/register", json={"username": username, "password": password})
@@ -129,13 +155,38 @@ def run_demo_check(base_url: str, username: str, password: str) -> bool:
             reg_data = reg_resp.json()
             token = reg_data.get("access_token")
             role = reg_data.get("role")
-            log_pass(
-                2,
-                f"Admin Registration (/auth/register)",
-                f"User '{username}' registered with role '{role}'"
-            )
+
+            if is_fresh_data_dir:
+                if role != "admin":
+                    all_passed = False
+                    log_fail(
+                        2,
+                        "Register demo user",
+                        f"Expected first user on fresh data dir to be 'admin', but got role '{role}'"
+                    )
+                    return False
+                log_pass(
+                    2,
+                    "Register demo user",
+                    f"User '{username}' registered as initial admin (role='admin') on fresh data dir"
+                )
+            else:
+                log_pass(
+                    2,
+                    "Register demo user",
+                    f"User '{username}' registered with role '{role}'"
+                )
         elif reg_resp.status_code == 400 and "already taken" in reg_resp.text.lower():
-            # Already registered - proceed to login with provided password
+            if is_fresh_data_dir:
+                all_passed = False
+                log_fail(
+                    2,
+                    "Register demo user",
+                    f"Username '{username}' already exists, but data dir was expected to be fresh"
+                )
+                return False
+
+            # Existing user - authenticate with provided password
             login_resp = client.post("/auth/login", json={"username": username, "password": password})
             if login_resp.status_code == 200:
                 login_data = login_resp.json()
@@ -143,24 +194,24 @@ def run_demo_check(base_url: str, username: str, password: str) -> bool:
                 role = login_data.get("role")
                 log_pass(
                     2,
-                    f"Admin Authentication (/auth/login)",
-                    f"Authenticated existing user '{username}' (role: '{role}')"
+                    "Register demo user",
+                    f"Authenticated existing user '{username}' (role='{role}')"
                 )
             else:
                 all_passed = False
                 log_fail(
                     2,
-                    f"Admin Authentication (/auth/login)",
-                    f"Username exists but login failed (HTTP {login_resp.status_code}): {login_resp.text}"
+                    "Register demo user",
+                    f"Username exists but authentication failed (HTTP {login_resp.status_code}): {login_resp.text}"
                 )
                 return False
         else:
             all_passed = False
-            log_fail(2, "Admin Registration (/auth/register)", f"HTTP {reg_resp.status_code}: {reg_resp.text}")
+            log_fail(2, "Register demo user", f"HTTP {reg_resp.status_code}: {reg_resp.text}")
             return False
     except Exception as e:
         all_passed = False
-        log_fail(2, "Admin Registration/Auth", f"Exception during auth: {str(e)}")
+        log_fail(2, "Register demo user", f"Exception during registration: {str(e)}")
         return False
 
     headers = {"Authorization": f"Bearer {token}"}
@@ -252,10 +303,10 @@ def run_demo_check(base_url: str, username: str, password: str) -> bool:
         log_fail(4, "Document Question", f"Exception: {str(e)}")
 
     # --------------------------------------------------------------------------
-    # Step 5: Ask Calculator Question
+    # Step 5: Ask Calculator Question & Assert Tool Invocation from Run Trace
     # --------------------------------------------------------------------------
     try:
-        calc_question = "What is 125 multiplied by 8? Please calculate the exact result."
+        calc_question = "What is 125 multiplied by 8? Please calculate the exact result using the calculator tool."
         log_info(f"Submitting calculator query: '{calc_question}'")
         calc_resp = client.post(
             f"/agents/{doc_agent_id}/run",
@@ -267,12 +318,35 @@ def run_demo_check(base_url: str, username: str, password: str) -> bool:
             c_data = calc_resp.json()
             status = c_data.get("status")
             answer = c_data.get("answer", "")
+            run_id = c_data.get("run_id")
 
-            if status == "completed" and ("1000" in answer or "1,000" in answer):
+            # Retrieve full execution trace from backend to assert calculator was invoked
+            trace_resp = client.get(f"/runs/{run_id}", headers=headers)
+            steps = []
+            if trace_resp.status_code == 200:
+                steps = trace_resp.json().get("steps", [])
+
+            calculator_called = False
+            for s in steps:
+                s_type = s.get("step_type", "")
+                input_data = str(s.get("input_data", "")).lower()
+                output_data = str(s.get("output_data", "")).lower()
+                if "calculator" in input_data or "calculator" in output_data:
+                    calculator_called = True
+                    break
+
+            if status == "completed" and calculator_called and ("1000" in answer or "1,000" in answer):
                 log_pass(
                     5,
                     "Calculator Tool Query (/agents/.../run)",
-                    f"Status: {status} | Result: {answer.strip()[:100]}..."
+                    f"Status: {status} | Trace: calculator tool confirmed in steps | Result: {answer.strip()[:100]}..."
+                )
+            elif not calculator_called:
+                all_passed = False
+                log_fail(
+                    5,
+                    "Calculator Query (/agents/.../run)",
+                    f"Run #{run_id} completed but run trace did NOT record calculator invocation. Steps: {steps}"
                 )
             else:
                 all_passed = False
@@ -318,6 +392,16 @@ def main() -> int:
         default=os.getenv("ADMIN_PASSWORD"),
         help="Admin password (passed via --password or ADMIN_PASSWORD env var; NEVER hardcoded)"
     )
+    parser.add_argument(
+        "--spawn-backend",
+        action="store_true",
+        help="Automatically spawn backend process using a temporary SOVEREIGN_DATA_DIR"
+    )
+    parser.add_argument(
+        "--fresh-data",
+        action="store_true",
+        help="Assert that the target backend is running against a fresh data dir (first user must be admin)"
+    )
 
     args = parser.parse_args()
 
@@ -336,12 +420,108 @@ def main() -> int:
         sys.stderr.write("Error: Admin password must be at least 6 characters long.\n")
         return 1
 
-    success = run_demo_check(
-        base_url=args.base_url.rstrip("/"),
-        username=args.username,
-        password=password
-    )
-    return 0 if success else 1
+    temp_dir_obj = None
+    backend_proc = None
+    is_fresh = args.fresh_data
+
+    # If backend is not already listening or --spawn-backend requested, spawn it using a temporary data dir
+    parsed_host = "127.0.0.1"
+    parsed_port = 8000
+    if ":" in args.base_url:
+        try:
+            parsed_port = int(args.base_url.rsplit(":", 1)[1].split("/")[0])
+        except ValueError:
+            parsed_port = 8000
+
+    backend_listening = is_port_open(parsed_host, parsed_port)
+
+    if args.spawn_backend or not backend_listening:
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix="sovereign_demo_data_", ignore_cleanup_errors=True)
+        temp_data_dir = temp_dir_obj.name
+        is_fresh = True
+        log_info(f"Using isolated temporary SOVEREIGN_DATA_DIR: {temp_data_dir} (real data/ will not be touched)")
+
+        # Prepare backend environment
+        temp_data_path = Path(temp_data_dir)
+        backend_env = os.environ.copy()
+        backend_env["SOVEREIGN_DATA_DIR"] = temp_data_dir
+        backend_env["DATA_DIR"] = temp_data_dir
+        backend_env["DATABASE_URL"] = f"sqlite:///{temp_data_path.as_posix()}/sovereign.db"
+        backend_env["DEMO_DATABASE_URL"] = f"sqlite:///{temp_data_path.as_posix()}/demo.db"
+        backend_env["CHROMA_PERSIST_DIR"] = str(temp_data_path / "chroma")
+        backend_env["UPLOAD_DIR"] = str(temp_data_path / "uploads")
+        backend_env["ANONYMIZED_TELEMETRY"] = "false"
+        backend_env["CHROMA_TELEMETRY"] = "false"
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "backend.main:app",
+            "--host",
+            parsed_host,
+            "--port",
+            str(parsed_port),
+        ]
+        log_info(f"Spawning backend process: {' '.join(cmd)}")
+        backend_proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=backend_env)
+
+        # Wait for liveness endpoint
+        started = False
+        for _ in range(40):
+            time.sleep(0.5)
+            if is_port_open(parsed_host, parsed_port):
+                try:
+                    with httpx.Client(base_url=args.base_url, timeout=2.0) as c:
+                        if c.get("/live").status_code == 200:
+                            started = True
+                            log_info(f"Backend started successfully (PID: {backend_proc.pid})")
+                            break
+                except Exception:
+                    pass
+
+        if not started:
+            sys.stderr.write("[ERROR] Spawned backend failed to start within 20 seconds.\n")
+            if backend_proc:
+                backend_proc.terminate()
+            if temp_dir_obj:
+                temp_dir_obj.cleanup()
+            return 1
+
+    try:
+        success = run_demo_check(
+            base_url=args.base_url.rstrip("/"),
+            username=args.username,
+            password=password,
+            is_fresh_data_dir=is_fresh
+        )
+        return 0 if success else 1
+    finally:
+        if backend_proc:
+            log_info(f"Terminating spawned backend process (PID: {backend_proc.pid})...")
+            try:
+                import psutil
+                parent = psutil.Process(backend_proc.pid)
+                for child in parent.children(recursive=True):
+                    try:
+                        child.kill()
+                    except Exception:
+                        pass
+                parent.kill()
+            except Exception:
+                backend_proc.kill()
+            try:
+                backend_proc.wait(timeout=5)
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+        if temp_dir_obj:
+            log_info("Cleaning up temporary SOVEREIGN_DATA_DIR...")
+            try:
+                temp_dir_obj.cleanup()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

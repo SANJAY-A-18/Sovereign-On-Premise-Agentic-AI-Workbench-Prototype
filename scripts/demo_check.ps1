@@ -19,7 +19,9 @@
 param(
     [string]$BaseUrl = $env:BACKEND_URL,
     [string]$Username = $env:ADMIN_USERNAME,
-    [string]$Password = $env:ADMIN_PASSWORD
+    [string]$Password = $env:ADMIN_PASSWORD,
+    [switch]$SpawnBackend,
+    [switch]$FreshData
 )
 
 if (-not $BaseUrl) { $BaseUrl = "http://127.0.0.1:8000" }
@@ -41,5 +43,9 @@ if (-not (Test-Path $pythonExe)) {
 }
 
 $scriptPath = Join-Path $PSScriptRoot "demo_check.py"
-& $pythonExe $scriptPath --base-url $BaseUrl --username $Username --password $Password
+$cmdArgs = @($scriptPath, "--base-url", $BaseUrl, "--username", $Username, "--password", $Password)
+if ($SpawnBackend) { $cmdArgs += "--spawn-backend" }
+if ($FreshData) { $cmdArgs += "--fresh-data" }
+
+& $pythonExe @cmdArgs
 exit $LASTEXITCODE

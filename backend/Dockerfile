@@ -36,9 +36,9 @@ USER appuser
 # Expose backend port (bound to localhost on host by compose)
 EXPOSE 8000
 
-# Container healthcheck against /health endpoint
-HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://127.0.0.1:8000/health || exit 1
+# Container healthcheck against lightweight /live liveness endpoint
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://127.0.0.1:8000/live || exit 1
 
 # Start FastAPI application
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -56,6 +56,16 @@ def client():
     return TestClient(app)
 
 
+def test_liveness_check_endpoint(client):
+    """Verify /live endpoint returns 200 and alive status without querying Ollama."""
+    res = client.get("/live")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "alive"
+    assert "timestamp" in data
+    assert "system" in data
+
+
 def test_health_check_endpoint(client):
     res = client.get("/health")
     assert res.status_code == 200

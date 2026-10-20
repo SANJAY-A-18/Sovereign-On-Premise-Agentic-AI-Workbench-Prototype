@@ -72,7 +72,26 @@ FastAPI Backend (Port 8000, 127.0.0.1 only) ──────► Host Ollama (h
 
 ---
 
-## Docker Quickstart (One-Command Deployment)
+## Primary Demo Path: Native Launcher (Recommended)
+
+For evaluation, live demonstration, and interactive testing on Windows laptops with 8 GB RAM, running natively from the Python `.venv` is the **recommended primary path**:
+
+```powershell
+# One-command native launch (starts FastAPI backend + Streamlit UI + Ollama check)
+.\scripts\run_native.ps1
+```
+
+This single PowerShell script:
+1. Validates the local Python `.venv` virtual environment.
+2. Checks reachability of native host Ollama (`http://localhost:11434`) and verifies required models (`qwen2.5:3b`, `nomic-embed-text`).
+3. Automatically generates a secure 256-bit JWT secret in `.env` if missing.
+4. Starts the FastAPI backend on `http://127.0.0.1:8000` and monitors the lightweight `/live` endpoint.
+5. Starts the Streamlit Web UI on `http://127.0.0.1:8501`.
+6. Prints all service URLs and terminates both servers cleanly upon `Ctrl+C`.
+
+---
+
+## Secondary Deployment Path: Docker Compose Containers
 
 ### Prerequisites
 1. **Ollama** running natively on the host:
@@ -80,7 +99,12 @@ FastAPI Backend (Port 8000, 127.0.0.1 only) ──────► Host Ollama (h
    ollama pull qwen2.5:3b
    ollama pull nomic-embed-text
    ```
-2. **Docker** and **Docker Compose v2** installed on your system.
+2. **Docker** and **Docker Compose v2** installed with WSL2 on Windows.
+
+> [!NOTE]
+> **Environment & Verification Transparency:**
+> Docker Desktop and WSL2 were **not run locally on the development laptop** because WSL2 is not installed on this machine (`wsl -l -v` returned `The Windows Subsystem for Linux is not installed`).
+> All container packaging, Dockerfiles, and compose configurations are automated and verified via GitHub Actions CI ([.github/workflows/docker-ci.yml](file:///c:/Users/SanjayAnandhakumar/Desktop/FYP/.github/workflows/docker-ci.yml)).
 
 ### 3 Commands to Deploy
 ```powershell
@@ -103,18 +127,20 @@ Or with PowerShell wrapper:
 ```powershell
 .\scripts\demo_check.ps1 -Password "YourAdminPassword123!"
 ```
+*(When no backend is running, `scripts/demo_check.py` automatically spawns an ephemeral backend using an isolated temporary `SOVEREIGN_DATA_DIR` so that repository data files are never modified).*
 
 **Web UI Access:** [http://127.0.0.1:8501](http://127.0.0.1:8501)  
 **API Documentation:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)  
-**System Health:** [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+**System Readiness:** [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)  
+**System Liveness:** [http://127.0.0.1:8000/live](http://127.0.0.1:8000/live)
 
-Detailed offline air-gapped procedures and memory benchmark results are in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Detailed offline air-gapped procedures, empirical memory benchmark results, and `.wslconfig` recommendations are in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ---
 
-## Native Windows Host Setup (Alternative)
+## Manual Native Windows Host Setup (Alternative)
 
-If running without Docker:
+If running each component in separate PowerShell windows manually:
 
 ### 1. Create Virtual Environment & Install Dependencies
 Open **PowerShell** in the project repository root:

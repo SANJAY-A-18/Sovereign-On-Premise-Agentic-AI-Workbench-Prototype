@@ -193,12 +193,25 @@ class ApprovalDecisionRequest(BaseModel):
 
 
 # ==============================================================================
-# 1. Health Endpoint
+# 1. Health & Liveness Endpoints
 # ==============================================================================
+
+@app.get("/live", tags=["System"])
+def liveness_check():
+    """
+    Lightweight liveness probe checking FastAPI process availability with zero external/Ollama dependencies.
+    Used for container lifecycle and Docker healthchecks.
+    """
+    return {
+        "status": "alive",
+        "system": "Sovereign On-Premise Agentic AI Workbench",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
 
 @app.get("/health", tags=["System"])
 def health_check():
-    """Checks whether Ollama is reachable and whether configured models are present."""
+    """Readiness probe: checks whether Ollama is reachable and whether configured models are present."""
     ollama_status = ollama_client.check_health()
     is_healthy = (
         ollama_status.get("reachable", False)

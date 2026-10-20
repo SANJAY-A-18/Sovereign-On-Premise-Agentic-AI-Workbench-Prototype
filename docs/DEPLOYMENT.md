@@ -44,20 +44,39 @@ Host Windows Machine (8 GB RAM Budget, No GPU)
 
 ---
 
-## 2. Quickstart: One-Command Deployment
+## 2. Quickstart & Execution Paths
 
-### Prerequisites
-- Native **Ollama** installed on the host and running:
-  ```powershell
-  ollama serve
-  ollama pull qwen2.5:3b
-  ollama pull nomic-embed-text
-  ```
-- **Docker** and **Docker Compose v2** installed.
+### Primary Demo Path: Native Virtual Environment Launcher
+For evaluation, demonstration, and daily development on Windows laptops with 8 GB RAM, running natively from the Python `.venv` is the **recommended primary path**:
 
-### 3-Command Launch
 ```powershell
-# 1. Generate a cryptographically secure 256-bit JWT secret into .env
+# One-command native launch (starts backend + Streamlit UI + Ollama check)
+.\scripts\run_native.ps1
+```
+This launcher:
+1. Validates the `.venv` Python runtime.
+2. Checks that native host Ollama (`http://localhost:11434`) is running with required models (`qwen2.5:3b`, `nomic-embed-text`).
+3. Automatically generates a secure 256-bit JWT secret in `.env` if missing.
+4. Starts FastAPI on `http://127.0.0.1:8000` and verifies `/live` responsiveness.
+5. Starts Streamlit on `http://127.0.0.1:8501`.
+6. Prints all service endpoints and handles clean shutdown on `Ctrl+C`.
+
+---
+
+### Secondary Deployment Path: Docker Compose Containers
+
+#### Prerequisites
+- Native **Ollama** installed on the host and running (`ollama serve`).
+- **Docker** and **Docker Compose v2** installed with WSL2 on Windows.
+
+> [!NOTE]
+> **Environment & Verification Transparency:**
+> Docker Desktop and WSL2 were **not run locally on the development laptop** because WSL2 is not installed on this machine (`wsl -l -v` returned `The Windows Subsystem for Linux is not installed`).
+> All container packaging, Dockerfiles, and compose configurations are automated and verified via GitHub Actions CI ([.github/workflows/docker-ci.yml](file:///c:/Users/SanjayAnandhakumar/Desktop/FYP/.github/workflows/docker-ci.yml)).
+
+#### 3-Command Launch
+```powershell
+# 1. Generate a cryptographically secure 256-bit JWT secret in .env
 python scripts/gen_secret.py --write
 
 # 2. Build the production runtime containers (pinned requirements.txt only)
@@ -70,10 +89,11 @@ docker compose up -d
 ### Accessing the Workbench
 - **Streamlit Web UI**: [http://127.0.0.1:8501](http://127.0.0.1:8501)
 - **FastAPI Documentation**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- **System Health Status**: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+- **System Health Status (Readiness)**: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+- **System Liveness Status**: [http://127.0.0.1:8000/live](http://127.0.0.1:8000/live)
 
 ### Running Acceptance & Demo Verification
-After starting the stack, verify all 5 end-to-end workflows (Ollama health, admin authentication, document upload, RAG retrieval question with citations, and arithmetic calculation):
+Verify all 5 end-to-end workflows (Ollama health, admin authentication, document upload, RAG retrieval question with citations, and arithmetic calculation with run trace assertion):
 ```powershell
 python scripts/demo_check.py --password "YourAdminPassword123!"
 ```
@@ -81,6 +101,7 @@ Or via PowerShell wrapper:
 ```powershell
 .\scripts\demo_check.ps1 -Password "YourAdminPassword123!"
 ```
+*(When no backend is active, `scripts/demo_check.py` automatically spawns an ephemeral backend using a temporary `SOVEREIGN_DATA_DIR` to guarantee the real `data/` directory is never modified).*
 
 ---
 
@@ -139,7 +160,7 @@ docker stats --no-stream
 docker : The term 'docker' is not recognized as the name of a cmdlet, function, script file, or operable program. 
 Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
 ```
-*Environment finding*: The host machine does not have Docker Desktop or WSL2 installed (`wsl -l -v` returned `The Windows Subsystem for Linux is not installed`).
+*Honest Environment Disclosure*: Docker Desktop and WSL2 were **not installed or executed on the development laptop** (`wsl -l -v` returned: `The Windows Subsystem for Linux is not installed`). All container lifecycle and healthcheck verifications are performed via CI ([.github/workflows/docker-ci.yml](file:///c:/Users/SanjayAnandhakumar/Desktop/FYP/.github/workflows/docker-ci.yml)).
 
 #### 2. Psutil Memory Audit (Measured During Full End-to-End Query Execution)
 Measurements recorded using Python's `psutil` library tracking host virtual memory and Ollama processes:
@@ -150,13 +171,17 @@ Measurements recorded using Python's `psutil` library tracking host virtual memo
 | **Stack Idle (Uvicorn Active)** | 7.692 GB | 6.715 GB (87.3%) | 0.977 GB | 28.23 MB | 145.62 MB | **173.85 MB** |
 | **Active Query Generation** | 7.692 GB | 7.278 GB (94.6%) | 0.414 GB | **2,339.31 MB** | 158.40 MB | **2,497.71 MB** |
 
-### Memory Analysis & 8 GB RAM Feasibility Warning
+> [!NOTE]
+> **Measurement Conditions:**
+> These RAM figures were measured with the development IDE (Antigravity IDE / VS Code) and browser open on the Windows host (**not a clean, headless baseline**). On a stripped-down headless Windows installation, baseline OS RAM consumption is typically 2.5–3.5 GB rather than ~6.5 GB.
+
+### Memory Analysis & 8 GB RAM Feasibility
 
 > [!WARNING]
-> **Severe Memory Pressure Warning on 8 GB Hosts:**
-> 1. When the chat model (`qwen2.5:3b`) and embedding model (`nomic-embed-text`) are actively answering questions, Ollama's Resident Set Size (RSS) expands from **28.23 MB** to **2,339.31 MB (~2.34 GB)**.
-> 2. With the Windows operating system and baseline background services consuming ~6.5 GB of RAM, active generation pushes host RAM utilization to **94.6% (7.28 GB / 7.69 GB)**, leaving only **414 MB of free physical RAM**.
-> 3. If Docker Desktop runs on top of this without strict memory bounds, WSL2 will allocate up to **50% of host RAM (3.85 GB)** for its Linux VM by default. In that scenario, total memory demand (3.85 GB WSL2 + 2.34 GB Ollama + 5.0 GB Windows) exceeds 11 GB, causing severe disk thrashing, paging lag, or OOM crashes.
+> **Memory Pressure Analysis on 8 GB Hosts:**
+> 1. When the chat model (`qwen2.5:3b`) and embedding model (`nomic-embed-text`) actively generate answers, Ollama's Resident Set Size (RSS) expands from **28.23 MB** to **2,339.31 MB (~2.34 GB)**.
+> 2. With the Windows operating system and active desktop apps consuming ~6.5 GB of RAM during our test, active generation pushed host RAM utilization to **94.6% (7.28 GB / 7.69 GB)**, leaving **414 MB of free physical RAM**.
+> 3. **The ~12 GB memory figure is an analytical estimate**: If Docker Desktop / WSL2 were running with default settings (WSL2 dynamically allocates up to 50% of host RAM = ~3.85 GB) alongside native Ollama (2.34 GB) and existing host working sets (~6.5 GB), total theoretical memory demand would reach **12.5 GB**. On an 8 GB physical laptop, this causes heavy paging and disk thrashing unless WSL2 is bounded.
 
 ### Recommended `.wslconfig` Memory Cap (Manual Configuration)
 

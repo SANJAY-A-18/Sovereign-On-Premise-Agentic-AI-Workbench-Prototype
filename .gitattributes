@@ -1,0 +1,4 @@
+eval/data/** text eol=lf
+*.sh text eol=lf
+Dockerfile* text eol=lf
+scripts/gen_secret text eol=lf

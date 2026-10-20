@@ -1,0 +1,75 @@
+name: Docker Compose CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  docker-build-verify:
+    name: Build & Verify Compose Stack (No Ollama)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Generate JWT Secret & Initialize .env
+        run: |
+          # Generate 256-bit secure secret at runtime without checking secrets into the repo
+          GENERATED_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+          echo "JWT_SECRET_KEY=${GENERATED_SECRET}" >> $GITHUB_ENV
+          echo "JWT_SECRET_KEY=${GENERATED_SECRET}" > .env
+          echo "JWT_SECRET_KEY successfully generated."
+
+      - name: Validate Docker Compose Configuration
+        run: docker compose config
+
+      - name: Build Docker Images (Backend & UI)
+        run: docker compose build
+
+      - name: Start Docker Compose Stack (Ollama Absent)
+        run: docker compose up -d
+
+      - name: Verify Backend Liveness (/live)
+        run: |
+          echo "Waiting for FastAPI backend /live probe..."
+          for i in {1..30}; do
+            if curl -sf http://127.0.0.1:8000/live; then
+              echo ""
+              echo "Backend /live is responsive!"
+              break
+            fi
+            sleep 2
+          done
+
+          # Assert HTTP 200 and alive status
+          RESPONSE=$(curl -sf http://127.0.0.1:8000/live)
+          echo "Backend /live response: $RESPONSE"
+          echo "$RESPONSE" | grep -q '"status":"alive"' || (echo "Backend /live assertion failed" && exit 1)
+
+      - name: Verify Streamlit UI Health (/_stcore/health)
+        run: |
+          echo "Waiting for Streamlit UI health probe..."
+          for i in {1..30}; do
+            if curl -sf http://127.0.0.1:8501/_stcore/health; then
+              echo ""
+              echo "Streamlit UI health endpoint is responsive!"
+              break
+            fi
+            sleep 2
+          done
+
+          # Assert HTTP 200
+          UI_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8501/_stcore/health)
+          echo "Streamlit UI HTTP status: $UI_STATUS"
+          [ "$UI_STATUS" -eq 200 ] || (echo "UI health probe failed with status $UI_STATUS" && exit 1)
+
+      - name: Inspect Running Containers
+        run: docker compose ps
+
+      - name: Teardown Docker Compose Stack
+        if: always()
+        run: docker compose down -v
