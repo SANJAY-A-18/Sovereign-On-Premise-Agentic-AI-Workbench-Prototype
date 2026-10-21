@@ -103,6 +103,19 @@ async def lifespan(app: FastAPI):
             r.final_answer = "Run was interrupted by server restart or shutdown."
         if orphaned:
             db.commit()
+
+        # Check JWT key strength and warn if default/weak
+        insecure_keys = {
+            "sovereign-workbench-local-offline-secret-key-2026",
+            "secret",
+            "default",
+            "change-this-to-a-secure-random-secret-key-in-production",
+        }
+        if not settings.JWT_SECRET_KEY or settings.JWT_SECRET_KEY in insecure_keys or len(settings.JWT_SECRET_KEY) < 32:
+            import logging
+            logging.getLogger("uvicorn.error").warning(
+                "SECURITY WARNING: Insecure or default JWT_SECRET_KEY in use! Run 'python scripts/gen_secret.py --write' to configure a cryptographically strong secret."
+            )
     finally:
         db.close()
     yield
@@ -358,7 +371,14 @@ def upload_document(
         )
 
     # Sanitize filename
-    safe_filename = Path(file.filename).name
+    import urllib.parse
+    raw_name = urllib.parse.unquote(str(file.filename or "")).strip()
+    safe_filename = Path(raw_name).name.strip()
+    if not safe_filename or safe_filename.startswith("."):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or hidden filename.",
+        )
 
     # Check for duplicate filename in knowledge base
     existing = db.query(Document).filter(Document.filename == safe_filename).first()
@@ -430,7 +450,14 @@ def upload_document(
             chunks=chunks,
         )
     except Exception as e:
-        # Chroma or embedding failed
+        # Chroma or embedding failed: clean up DB record and disk file
+        db.delete(doc_record)
+        db.commit()
+        if save_dest.exists():
+            try:
+                save_dest.unlink()
+            except Exception:
+                pass
         log_audit_event(
             user=current_user.username,
             action="document_ingestion_failed",
@@ -769,8 +796,23 @@ def run_agent(
     )
 
     # Execute hand-crafted loop
-    result = AgentRunner.run_agent(run_id=new_run.id, db=db)
-    return result
+    try:
+        result = AgentRunner.run_agent(run_id=new_run.id, db=db)
+        return result
+    except Exception as exc:
+        db.rollback()
+        try:
+            r = db.query(Run).filter(Run.id == new_run.id).first()
+            if r:
+                r.status = "failed"
+                r.final_answer = f"Agent execution encountered an unhandled error: {str(exc)}"
+                db.commit()
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Agent execution encountered an unhandled error: {str(exc)}",
+        )
 
 
 @app.get("/runs", tags=["Runs"])

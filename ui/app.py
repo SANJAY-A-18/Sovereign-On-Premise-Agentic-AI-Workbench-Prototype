@@ -426,8 +426,14 @@ def render_chat_run_result(run_id: int):
                 f"Trace Run ID: `#{run_id}` &bull; Latency: {lat_sec}s ({lat_ms} ms, cumulative step compute time) — view full execution steps in the **Traces** tab."
             )
 
-        elif status == "failed":
-            was_denied = any("denied by human supervisor" in (s.get("output_data") or "").lower() for s in steps) or "denied by human supervisor" in final_answer.lower()
+        elif status in ("failed", "denied"):
+            was_denied = (
+                status == "denied"
+                or any(a.get("status") == "denied" for a in run_data.get("approvals", []))
+                or any("denied by human supervisor" in (s.get("output_data") or "").lower() for s in steps)
+                or any("human supervisor denied" in (s.get("output_data") or "").lower() for s in steps)
+                or "denied by human supervisor" in final_answer.lower()
+            )
             if was_denied:
                 st.warning("🛑 Tool execution denied by human supervisor")
                 st.markdown("### Model Final Answer")
@@ -825,7 +831,13 @@ with tab_dict["🛡️ Approvals"]:
         # Show outcome notification for recently decided approval with link to run
         if st.session_state.get("last_approval_decision"):
             dec = st.session_state["last_approval_decision"]
-            st.info(f"📋 **Recent Decision Outcome:** Request `#{dec['id']}` was **{dec['decision'].upper()}** for Run `#{dec['run_id']}`. [👉 Open Chat tab to view final answer](#💬-chat) &bull; View trace in **🔍 Traces** tab.")
+            col_banner, col_dismiss = st.columns([5, 1])
+            with col_banner:
+                st.info(f"📋 **Recent Decision Outcome:** Request `#{dec['id']}` was **{dec['decision'].upper()}** for Run `#{dec['run_id']}`. [👉 Open Chat tab to view final answer](#💬-chat) &bull; View trace in **🔍 Traces** tab.")
+            with col_dismiss:
+                if st.button("✖ Dismiss", key="dismiss_approval_banner", help="Dismiss this notification"):
+                    st.session_state.last_approval_decision = None
+                    st.rerun()
 
         try:
             apprv_res = requests.get(f"{BACKEND_URL}/approvals/pending", headers=get_auth_headers(), timeout=5.0)

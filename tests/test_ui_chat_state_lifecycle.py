@@ -302,3 +302,40 @@ def test_chat_lifecycle_denied_then_answered(mock_lifecycle_backend):
         assert "Run `#202`" not in md_after
         assert "Undergraduate students are allowed 4 books" in md_after
         assert "Run `#101`" in md_after
+
+
+def test_m4_approvals_banner_dismiss(mock_lifecycle_backend):
+    """M-4: Verify Approvals tab recent decision banner can be cleanly dismissed."""
+    mock_get, _ = mock_lifecycle_backend
+
+    with patch("requests.get", side_effect=mock_get):
+        at = AppTest.from_file("ui/app.py", default_timeout=15)
+        at.session_state["token"] = "valid-token"
+        at.session_state["user_info"] = {"user_id": 1, "username": "admin", "role": "admin"}
+        at.session_state["last_approval_decision"] = {
+            "id": 1,
+            "decision": "approved",
+            "run_id": 201,
+        }
+        at.run()
+
+        # Check banner exists in info messages
+        info_text = " ".join([i.value for i in at.info])
+        assert "Recent Decision Outcome" in info_text
+        assert "Request `#1` was **APPROVED**" in info_text
+
+        # Click dismiss button
+        dismiss_btn = None
+        for b in at.button:
+            if "Dismiss" in b.label:
+                dismiss_btn = b
+                break
+        assert dismiss_btn is not None
+        dismiss_btn.click().run()
+
+        # Banner should now be dismissed
+        info_text_after = " ".join([i.value for i in at.info])
+        assert "Recent Decision Outcome" not in info_text_after
+        assert at.session_state["last_approval_decision"] is None
+
+

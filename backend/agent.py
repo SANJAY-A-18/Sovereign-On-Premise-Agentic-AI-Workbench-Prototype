@@ -677,7 +677,7 @@ class AgentRunner:
                     step_number=step_counter,
                     step_type="policy",
                     input_data=f"Denied approval for {pending_approval.tool_name}",
-                    output_data="Human supervisor denied this high-risk action.",
+                    output_data="Tool execution was denied by human supervisor.",
                     latency_ms=0.0,
                 )
                 messages.append({
@@ -838,12 +838,19 @@ class AgentRunner:
                             })
                             continue
 
-                run.status = "completed"
+                # Post-eval fix: if an approval in this run was denied by a supervisor, set status to 'denied'
+                has_denied = (
+                    db.query(Approval)
+                    .filter(Approval.run_id == run_id, Approval.status == "denied")
+                    .first()
+                    is not None
+                )
+                run.status = "denied" if has_denied else "completed"
                 run.final_answer = final_answer
                 run.total_latency_ms = prior_latency + ((time.time() - start_time) * 1000)
                 db.commit()
                 return {
-                    "status": "completed",
+                    "status": run.status,
                     "answer": final_answer,
                     "sources": sources_used,
                     "run_id": run.id,
@@ -965,7 +972,13 @@ class AgentRunner:
                     continue
 
         # If max iterations exhausted
-        run.status = "completed"
+        has_denied = (
+            db.query(Approval)
+            .filter(Approval.run_id == run_id, Approval.status == "denied")
+            .first()
+            is not None
+        )
+        run.status = "denied" if has_denied else "completed"
         fallback_msg = (
             "Maximum reasoning iterations reached. Partial context gathered. "
             "Please review the trace steps for detailed observations."
@@ -974,7 +987,7 @@ class AgentRunner:
         run.total_latency_ms = prior_latency + ((time.time() - start_time) * 1000)
         db.commit()
         return {
-            "status": "completed",
+            "status": run.status,
             "answer": fallback_msg,
             "sources": sources_used,
             "run_id": run.id,

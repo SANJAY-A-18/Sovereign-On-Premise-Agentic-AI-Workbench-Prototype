@@ -182,8 +182,9 @@ def reset_db_engine():
     global engine, SessionLocal
     engine = create_engine(
         settings.DATABASE_URL,
-        connect_args={"check_same_thread": False},
+        connect_args={"check_same_thread": False, "timeout": 30.0},
     )
+    event.listen(engine, "connect", set_sqlite_pragma)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
