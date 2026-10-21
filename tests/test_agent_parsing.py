@@ -140,6 +140,13 @@ def test_invalid_schema_action():
         # 16. nested wrapper keys
         ('{"action": "tool", "tool": "search_documents", "args": {"args": {"query": "sample query"}}}', "sample query"),
         ('{"action": "tool", "tool": "search_documents", "args": {"arguments": "{\\"query\\": \\"sample query\\"}"}}', "sample query"),
+        # 17. Observed Shape: args: { with nested dict (Run 5)
+        ('{"action": "tool", "tool": "search_documents", "args: {": {"query": "sample query"}}', "sample query"),
+        ('{"action": "search_documents", "args: {": {"query": "sample query"}}', "sample query"),
+        # 18. Observed Shape: args: { with string query containing query: prefix (Runs 9, 13, 19)
+        ('{"action": "search_documents", "args: {": "query: sample query"}', "sample query"),
+        ('{"action": "search_documents", "args: {": "query: "}', ""),
+        ('{"action": "tool", "tool": "search_documents", "args: {": "sample query"}', "sample query"),
     ],
 )
 def test_all_wrapper_shapes(payload, expected_query):
@@ -149,8 +156,46 @@ def test_all_wrapper_shapes(payload, expected_query):
     assert action_data["tool"] == "search_documents"
     assert action_data["args"].get("query") == expected_query
     # Crucially ensure NO wrapper keys remain in args
-    for k in ["args", "args:", "arguments", "parameters", "params", "input"]:
+    for k in ["args", "args:", "args: {", "arguments", "parameters", "params", "input"]:
         assert k not in action_data["args"]
+
+
+def test_observed_read_file_file_path_alias():
+    # Observed Shape in Run 4: file_path instead of filename
+    payload = '{"action": "tool", "tool": "read_file", "args": {"file_path": "marks.txt"}}'
+    parsed = extract_json_from_llm(payload)
+    action_type, action_data = validate_agent_action(parsed)
+    assert action_type == "tool"
+    assert action_data["tool"] == "read_file"
+    assert action_data["args"] == {"filename": "marks.txt"}
+
+    # Top level file_path fallback
+    payload2 = '{"action": "read_file", "file_path": "marks.txt"}'
+    parsed2 = extract_json_from_llm(payload2)
+    action_type2, action_data2 = validate_agent_action(parsed2)
+    assert action_type2 == "tool"
+    assert action_data2["args"] == {"filename": "marks.txt"}
+
+
+def test_observed_calculator_brace_key():
+    # Observed Shape with calculator tool
+    payload = '{"action": "calculator", "args: {": {"expression": "15 * 2480 / 100"}}'
+    parsed = extract_json_from_llm(payload)
+    action_type, action_data = validate_agent_action(parsed)
+    assert action_type == "tool"
+    assert action_data["tool"] == "calculator"
+    assert action_data["args"] == {"expression": "15 * 2480 / 100"}
+
+
+def test_observed_run19_raw_payload():
+    # Exact raw string from Run 19 in data/sovereign.db
+    payload = '{\n  "action": "search_documents",\n  "args: {":\n    "query: "\t\t\t\t\t}'
+    parsed = extract_json_from_llm(payload)
+    action_type, action_data = validate_agent_action(parsed)
+    assert action_type == "tool"
+    assert action_data["tool"] == "search_documents"
+    assert action_data["args"] == {"query": ""}
+    assert "args: {" not in action_data["args"]
 
 
 def test_regression_sample_policy_queries(monkeypatch):

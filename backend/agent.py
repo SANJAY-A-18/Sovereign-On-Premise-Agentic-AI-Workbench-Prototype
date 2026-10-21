@@ -85,10 +85,16 @@ def extract_json_from_llm(raw: str) -> Dict[str, Any]:
 WRAPPER_KEYS = {"args", "arguments", "parameters", "params", "input"}
 
 
+def clean_wrapper_key(k: str) -> str:
+    """Normalize potential wrapper key by stripping leading/trailing whitespace, colons, and open braces."""
+    return str(k).strip().rstrip(":{ \t").strip().lower()
+
+
 def unwrap_tool_args(args: Any, tool_name: Optional[str] = None) -> Any:
     """
     Recursively unwrap wrapper keys (args, arguments, parameters, params, input),
-    whether provided as dictionaries or JSON strings, including keys with trailing colons.
+    whether provided as dictionaries or JSON strings, including keys with trailing colons
+    or opening braces like 'args: {'.
     """
     clean_tool = (tool_name or "").strip().lower()
 
@@ -103,10 +109,18 @@ def unwrap_tool_args(args: Any, tool_name: Optional[str] = None) -> Any:
                 pass
         # Raw non-JSON string for a tool
         if clean_tool == "calculator":
+            if cleaned_str.lower().startswith("expression:"):
+                cleaned_str = cleaned_str[11:].strip()
             return {"expression": cleaned_str}
         elif clean_tool == "read_file":
+            if cleaned_str.lower().startswith("filename:"):
+                cleaned_str = cleaned_str[9:].strip()
+            elif cleaned_str.lower().startswith("file_path:"):
+                cleaned_str = cleaned_str[10:].strip()
             return {"filename": cleaned_str}
         elif clean_tool in ("search_documents", "read_sql"):
+            if cleaned_str.lower().startswith("query:"):
+                cleaned_str = cleaned_str[6:].strip()
             return {"query": cleaned_str}
         return {"query": cleaned_str}
 
@@ -124,7 +138,7 @@ def unwrap_tool_args(args: Any, tool_name: Optional[str] = None) -> Any:
         # Check if single key is a wrapper key
         if len(current) == 1:
             k = next(iter(current.keys()))
-            norm_k = k.strip().rstrip(":").strip().lower()
+            norm_k = clean_wrapper_key(k)
             if norm_k in WRAPPER_KEYS:
                 val = current[k]
                 if isinstance(val, str):
@@ -137,12 +151,21 @@ def unwrap_tool_args(args: Any, tool_name: Optional[str] = None) -> Any:
                             val = str(parsed_val)
                     except Exception:
                         pass
+                    clean_val = str(val).strip()
                     if clean_tool == "calculator":
-                        return {"expression": str(val)}
+                        if clean_val.lower().startswith("expression:"):
+                            clean_val = clean_val[11:].strip()
+                        return {"expression": clean_val}
                     elif clean_tool == "read_file":
-                        return {"filename": str(val)}
+                        if clean_val.lower().startswith("filename:"):
+                            clean_val = clean_val[9:].strip()
+                        elif clean_val.lower().startswith("file_path:"):
+                            clean_val = clean_val[10:].strip()
+                        return {"filename": clean_val}
                     else:
-                        return {"query": str(val)}
+                        if clean_val.lower().startswith("query:"):
+                            clean_val = clean_val[6:].strip()
+                        return {"query": clean_val}
                 elif isinstance(val, dict):
                     current = val
                     continue
@@ -154,7 +177,7 @@ def unwrap_tool_args(args: Any, tool_name: Optional[str] = None) -> Any:
             # Check if there are metadata keys like action, tool, thought alongside a single wrapper key
             wrapper_candidates = [
                 k for k in current.keys()
-                if k.strip().rstrip(":").strip().lower() in WRAPPER_KEYS
+                if clean_wrapper_key(k) in WRAPPER_KEYS
             ]
             non_wrapper = [
                 k for k in current.keys()
@@ -170,12 +193,21 @@ def unwrap_tool_args(args: Any, tool_name: Optional[str] = None) -> Any:
                             continue
                     except Exception:
                         pass
+                    clean_val = str(val).strip()
                     if clean_tool == "calculator":
-                        return {"expression": str(val)}
+                        if clean_val.lower().startswith("expression:"):
+                            clean_val = clean_val[11:].strip()
+                        return {"expression": clean_val}
                     elif clean_tool == "read_file":
-                        return {"filename": str(val)}
+                        if clean_val.lower().startswith("filename:"):
+                            clean_val = clean_val[9:].strip()
+                        elif clean_val.lower().startswith("file_path:"):
+                            clean_val = clean_val[10:].strip()
+                        return {"filename": clean_val}
                     else:
-                        return {"query": str(val)}
+                        if clean_val.lower().startswith("query:"):
+                            clean_val = clean_val[6:].strip()
+                        return {"query": clean_val}
                 elif isinstance(val, dict):
                     current = val
                     continue
@@ -212,14 +244,20 @@ def normalize_tool_args(tool_name: str, args: Any) -> Dict[str, Any]:
                     break
         # If any wrapper key still lingers, unwrap it
         for wk in list(unwrapped.keys()):
-            if wk.strip().rstrip(":").strip().lower() in WRAPPER_KEYS and wk != "query":
+            if clean_wrapper_key(wk) in WRAPPER_KEYS and wk != "query":
                 nested = unwrapped.pop(wk)
                 if isinstance(nested, dict):
                     for nk, nv in nested.items():
                         if nk not in unwrapped:
                             unwrapped[nk] = nv
                 elif isinstance(nested, str) and "query" not in unwrapped:
-                    unwrapped["query"] = nested
+                    clean_nested = nested.strip()
+                    if clean_nested.lower().startswith("query:"):
+                        clean_nested = clean_nested[6:].strip()
+                    unwrapped["query"] = clean_nested
+        if "query" in unwrapped and isinstance(unwrapped["query"], str):
+            if unwrapped["query"].strip().lower().startswith("query:"):
+                unwrapped["query"] = unwrapped["query"].strip()[6:].strip()
 
     elif clean_tool == "calculator":
         if "expression" not in unwrapped:
@@ -234,14 +272,20 @@ def normalize_tool_args(tool_name: str, args: Any) -> Dict[str, Any]:
                     unwrapped["expression"] = str(val)
                     break
         for wk in list(unwrapped.keys()):
-            if wk.strip().rstrip(":").strip().lower() in WRAPPER_KEYS and wk != "expression":
+            if clean_wrapper_key(wk) in WRAPPER_KEYS and wk != "expression":
                 nested = unwrapped.pop(wk)
                 if isinstance(nested, dict):
                     for nk, nv in nested.items():
                         if nk not in unwrapped:
                             unwrapped[nk] = nv
                 elif isinstance(nested, str) and "expression" not in unwrapped:
-                    unwrapped["expression"] = nested
+                    clean_nested = nested.strip()
+                    if clean_nested.lower().startswith("expression:"):
+                        clean_nested = clean_nested[11:].strip()
+                    unwrapped["expression"] = clean_nested
+        if "expression" in unwrapped and isinstance(unwrapped["expression"], str):
+            if unwrapped["expression"].strip().lower().startswith("expression:"):
+                unwrapped["expression"] = unwrapped["expression"].strip()[11:].strip()
 
     elif clean_tool == "read_sql":
         if "query" not in unwrapped:
@@ -256,18 +300,24 @@ def normalize_tool_args(tool_name: str, args: Any) -> Dict[str, Any]:
                     unwrapped["query"] = str(val)
                     break
         for wk in list(unwrapped.keys()):
-            if wk.strip().rstrip(":").strip().lower() in WRAPPER_KEYS and wk != "query":
+            if clean_wrapper_key(wk) in WRAPPER_KEYS and wk != "query":
                 nested = unwrapped.pop(wk)
                 if isinstance(nested, dict):
                     for nk, nv in nested.items():
                         if nk not in unwrapped:
                             unwrapped[nk] = nv
                 elif isinstance(nested, str) and "query" not in unwrapped:
-                    unwrapped["query"] = nested
+                    clean_nested = nested.strip()
+                    if clean_nested.lower().startswith("query:"):
+                        clean_nested = clean_nested[6:].strip()
+                    unwrapped["query"] = clean_nested
+        if "query" in unwrapped and isinstance(unwrapped["query"], str):
+            if unwrapped["query"].strip().lower().startswith("query:"):
+                unwrapped["query"] = unwrapped["query"].strip()[6:].strip()
 
     elif clean_tool == "read_file":
         if "filename" not in unwrapped:
-            for alt in ["file_path", "path", "filename", "file", "target", "input", "filename:"]:
+            for alt in ["file_path", "path", "filename", "file", "target", "input", "filename:", "file_path:"]:
                 if alt in unwrapped:
                     val = unwrapped.pop(alt)
                     if isinstance(val, dict):
@@ -278,14 +328,24 @@ def normalize_tool_args(tool_name: str, args: Any) -> Dict[str, Any]:
                     unwrapped["filename"] = str(val)
                     break
         for wk in list(unwrapped.keys()):
-            if wk.strip().rstrip(":").strip().lower() in WRAPPER_KEYS and wk != "filename":
+            if clean_wrapper_key(wk) in WRAPPER_KEYS and wk != "filename":
                 nested = unwrapped.pop(wk)
                 if isinstance(nested, dict):
                     for nk, nv in nested.items():
                         if nk not in unwrapped:
                             unwrapped[nk] = nv
                 elif isinstance(nested, str) and "filename" not in unwrapped:
-                    unwrapped["filename"] = nested
+                    clean_nested = nested.strip()
+                    if clean_nested.lower().startswith("filename:"):
+                        clean_nested = clean_nested[9:].strip()
+                    elif clean_nested.lower().startswith("file_path:"):
+                        clean_nested = clean_nested[10:].strip()
+                    unwrapped["filename"] = clean_nested
+        if "filename" in unwrapped and isinstance(unwrapped["filename"], str):
+            if unwrapped["filename"].strip().lower().startswith("filename:"):
+                unwrapped["filename"] = unwrapped["filename"].strip()[9:].strip()
+            elif unwrapped["filename"].strip().lower().startswith("file_path:"):
+                unwrapped["filename"] = unwrapped["filename"].strip()[10:].strip()
 
     return unwrapped
 
@@ -324,14 +384,14 @@ def validate_agent_action(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             raise ValueError("Tool action must specify a 'tool' string name.")
 
         raw_args = None
-        for k in ["args", "args:", "arguments", "arguments:", "parameters", "parameters:", "params", "params:", "input", "input:"]:
-            if k in data:
+        for k in data.keys():
+            if clean_wrapper_key(k) in WRAPPER_KEYS:
                 raw_args = data[k]
                 break
 
         if raw_args is None:
-            reserved = {"action", "tool", "name", "thought", "args", "args:", "arguments", "parameters", "params", "input"}
-            fallback_args = {k: v for k, v in data.items() if k not in reserved}
+            reserved = {"action", "tool", "name", "thought"}
+            fallback_args = {k: v for k, v in data.items() if k.lower().strip() not in reserved and clean_wrapper_key(k) not in WRAPPER_KEYS}
             raw_args = fallback_args if fallback_args else {}
 
         normalized_args = normalize_tool_args(tool_name.strip(), raw_args)
@@ -349,18 +409,20 @@ def validate_agent_action(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         if tool_registry.get(action) is not None:
             tool_name = action
             raw_args = None
-            for k in ["args", "args:", "arguments", "arguments:", "parameters", "parameters:", "params", "params:", "input", "input:"]:
-                if k in data:
+            for k in data.keys():
+                if clean_wrapper_key(k) in WRAPPER_KEYS:
                     raw_args = data[k]
                     break
 
             if raw_args is None:
-                reserved = {"action", "tool", "name", "thought", "args", "args:", "arguments", "parameters", "params", "input"}
-                fallback_args = {k: v for k, v in data.items() if k not in reserved}
+                reserved = {"action", "tool", "name", "thought"}
+                fallback_args = {k: v for k, v in data.items() if k.lower().strip() not in reserved and clean_wrapper_key(k) not in WRAPPER_KEYS}
                 raw_args = fallback_args if fallback_args else {}
 
             normalized_args = normalize_tool_args(tool_name.strip(), raw_args)
             return "tool", {"tool": tool_name.strip(), "args": normalized_args}
+
+        raise ValueError(f"Unrecognized action '{action}'. Must be 'tool' or 'final'.")
 
         raise ValueError(f"Unrecognized action '{action}'. Must be 'tool' or 'final'.")
 
