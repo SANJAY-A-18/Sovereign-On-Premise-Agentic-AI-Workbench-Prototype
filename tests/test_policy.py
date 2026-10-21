@@ -200,7 +200,7 @@ def test_pii_masking_in_approval_args_stored_in_db(test_db):
         user_role="user",
         username="test_analyst",
         run_id=1,
-        tool_args={"query": f"SELECT * FROM students WHERE email = '{raw_email}' AND phone = '{raw_phone}'"},
+        tool_args={"query": f"SELECT * FROM students WHERE name = '{raw_email}' OR department = '{raw_phone}'"},
         db=test_db,
     )
 
