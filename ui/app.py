@@ -189,6 +189,8 @@ if "latest_run_id" not in st.session_state:
     st.session_state.latest_run_id = None
 if "last_approval_decision" not in st.session_state:
     st.session_state.last_approval_decision = None
+if "active_chat_agent_name" not in st.session_state:
+    st.session_state.active_chat_agent_name = None
 
 
 # ==============================================================================
@@ -207,6 +209,9 @@ if st.session_state.token:
         if me_res.status_code == 401:
             st.session_state.token = None
             st.session_state.user_info = None
+            st.session_state.latest_run_id = None
+            st.session_state.last_approval_decision = None
+            st.session_state.active_chat_agent_name = None
             st.warning("⚠️ Session expired or invalid. Please log in again.")
         elif me_res.status_code == 200:
             data = me_res.json()
@@ -282,6 +287,9 @@ with st.sidebar:
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state.token = None
             st.session_state.user_info = None
+            st.session_state.latest_run_id = None
+            st.session_state.last_approval_decision = None
+            st.session_state.active_chat_agent_name = None
             st.rerun()
     else:
         st.info("Please register or log in using the **Account** tab.")
@@ -330,104 +338,106 @@ def render_chat_run_result(run_id: int):
     Renders the execution result of an agent run (Document Assistant, Data Analyst, etc.)
     including answer, status banners, citations/retrieved context, and execution trace ID.
     Supports polling/refresh while paused for approval or running.
+    Keyed by run_id to ensure clean isolation across runs and states.
     """
-    try:
-        run_res = requests.get(f"{BACKEND_URL}/runs/{run_id}", headers=get_auth_headers(), timeout=5.0)
-        if run_res.status_code != 200:
-            st.error(f"Could not load run #{run_id} details ({run_res.status_code})")
+    with st.container(key=f"chat_run_result_container_{run_id}"):
+        try:
+            run_res = requests.get(f"{BACKEND_URL}/runs/{run_id}", headers=get_auth_headers(), timeout=5.0)
+            if run_res.status_code != 200:
+                st.error(f"Could not load run #{run_id} details ({run_res.status_code})")
+                return
+            run_data = run_res.json()
+        except Exception as e:
+            st.error(f"Failed to fetch run #{run_id}: {e}")
             return
-        run_data = run_res.json()
-    except Exception as e:
-        st.error(f"Failed to fetch run #{run_id}: {e}")
-        return
 
-    status = run_data.get("status")
-    final_answer = run_data.get("final_answer") or ""
-    steps = run_data.get("steps", [])
-    total_lat_ms = float(run_data.get("total_latency_ms") or 0.0)
-    lat_sec = round(total_lat_ms / 1000.0, 2)
-    lat_ms = round(total_lat_ms, 2)
+        status = run_data.get("status")
+        final_answer = run_data.get("final_answer") or ""
+        steps = run_data.get("steps", [])
+        total_lat_ms = float(run_data.get("total_latency_ms") or 0.0)
+        lat_sec = round(total_lat_ms / 1000.0, 2)
+        lat_ms = round(total_lat_ms, 2)
 
-    st.markdown("---")
-    st.markdown(f"#### 🤖 Agent Response &mdash; Run `#{run_id}`")
+        st.markdown("---")
+        st.markdown(f"#### 🤖 Agent Response &mdash; Run `#{run_id}`")
 
-    if status == "paused_for_approval":
-        st.markdown(f"""
-        <div class="approval-box">
-            <h4>⏳ Waiting for approval &mdash; open the Approvals tab</h4>
-            <p>Run #{run_id} is currently paused awaiting supervisor confirmation for a high-risk tool call.</p>
-            <p>👉 Please switch to the <b>🛡️ Approvals</b> tab to review, approve, or deny this action, then return here.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        col_poll, _ = st.columns([1, 4])
-        with col_poll:
-            if st.button("🔄 Refresh Status", key=f"poll_paused_{run_id}", use_container_width=True):
-                st.rerun()
+        if status == "paused_for_approval":
+            st.markdown(f"""
+            <div class="approval-box">
+                <h4>⏳ Waiting for approval &mdash; open the Approvals tab</h4>
+                <p>Run #{run_id} is currently paused awaiting supervisor confirmation for a high-risk tool call.</p>
+                <p>👉 Please switch to the <b>🛡️ Approvals</b> tab to review, approve, or deny this action, then return here.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            col_poll, _ = st.columns([1, 4])
+            with col_poll:
+                if st.button("🔄 Refresh Status", key=f"poll_paused_{run_id}", use_container_width=True):
+                    st.rerun()
 
-    elif status == "running":
-        st.info(f"⏳ Run #{run_id} is currently running... Click Refresh to check status.")
-        col_poll, _ = st.columns([1, 4])
-        with col_poll:
-            if st.button("🔄 Refresh Status", key=f"poll_running_{run_id}", use_container_width=True):
-                st.rerun()
+        elif status == "running":
+            st.info(f"⏳ Run #{run_id} is currently running... Click Refresh to check status.")
+            col_poll, _ = st.columns([1, 4])
+            with col_poll:
+                if st.button("🔄 Refresh Status", key=f"poll_running_{run_id}", use_container_width=True):
+                    st.rerun()
 
-    elif status == "completed":
-        has_tool_err = any(
-            s.get("step_type") == "tool" and "Tool Execution Error" in (s.get("output_data") or "")
-            for s in steps
-        )
-        has_retry = any(s.get("step_type") == "retry" for s in steps)
-        if has_tool_err or has_retry:
-            st.warning("⚠️ Completed with a recovered tool error")
-        else:
-            st.success("✅ Run Completed Successfully")
-
-        st.markdown("### Answer")
-        st.markdown(final_answer if final_answer else "_No text answer returned._")
-
-        # Collect citations / sources from search_documents steps
-        raw_sources = []
-        for s in steps:
-            if s.get("step_type") == "tool" and "search_documents" in (s.get("input_data") or ""):
-                out = s.get("output_data") or ""
-                if out and not out.startswith("Tool Execution Error"):
-                    raw_sources.append(out)
-
-        sources = [
-            src for src in raw_sources
-            if not src.startswith("Tool Execution Error") and "tool execution error" not in src.lower()
-        ]
-
-        if sources:
-            # Post-eval display nit: rename Citations panel to "Retrieved context" if answer is an abstention
-            is_abstention = any(p in final_answer.lower() for p in [
-                "i do not know", "do not know", "cannot find", "does not contain",
-                "insufficient information", "not mentioned", "no mention"
-            ])
-            if is_abstention:
-                st.markdown("#### 🔍 Retrieved context")
+        elif status == "completed":
+            has_tool_err = any(
+                s.get("step_type") == "tool" and "Tool Execution Error" in (s.get("output_data") or "")
+                for s in steps
+            )
+            has_retry = any(s.get("step_type") == "retry" for s in steps)
+            if has_tool_err or has_retry:
+                st.warning("⚠️ Completed with a recovered tool error")
             else:
-                st.markdown("#### 📚 Citations & Sources")
+                st.success("✅ Run Completed Successfully")
 
-            for src in sources:
-                st.markdown(f'<div class="citation-card">{src[:1500]}</div>', unsafe_allow_html=True)
+            st.markdown("### Answer")
+            st.markdown(final_answer if final_answer else "_No text answer returned._")
 
-        st.caption(
-            f"Trace Run ID: `#{run_id}` &bull; Latency: {lat_sec}s ({lat_ms} ms, cumulative step compute time) — view full execution steps in the **Traces** tab."
-        )
+            # Collect citations / sources from search_documents steps
+            raw_sources = []
+            for s in steps:
+                if s.get("step_type") == "tool" and "search_documents" in (s.get("input_data") or ""):
+                    out = s.get("output_data") or ""
+                    if out and not out.startswith("Tool Execution Error"):
+                        raw_sources.append(out)
 
-    elif status == "failed":
-        was_denied = any("denied by human supervisor" in (s.get("output_data") or "").lower() for s in steps) or "denied by human supervisor" in final_answer.lower()
-        if was_denied:
-            st.warning("🛑 Tool execution denied by human supervisor")
-            st.markdown("### Model Final Answer")
-            st.markdown(final_answer if final_answer else "Tool execution denied by human supervisor.")
-        else:
-            st.error(f"❌ Run Failed: {final_answer if final_answer else 'Execution error'}")
+            sources = [
+                src for src in raw_sources
+                if not src.startswith("Tool Execution Error") and "tool execution error" not in src.lower()
+            ]
 
-        st.caption(
-            f"Trace Run ID: `#{run_id}` &bull; Latency: {lat_sec}s ({lat_ms} ms) — view full execution steps in the **Traces** tab."
-        )
+            if sources:
+                # Post-eval display nit: rename Citations panel to "Retrieved context" if answer is an abstention
+                is_abstention = any(p in final_answer.lower() for p in [
+                    "i do not know", "do not know", "cannot find", "does not contain",
+                    "insufficient information", "not mentioned", "no mention"
+                ])
+                if is_abstention:
+                    st.markdown("#### 🔍 Retrieved context")
+                else:
+                    st.markdown("#### 📚 Citations & Sources")
+
+                for src in sources:
+                    st.markdown(f'<div class="citation-card">{src[:1500]}</div>', unsafe_allow_html=True)
+
+            st.caption(
+                f"Trace Run ID: `#{run_id}` &bull; Latency: {lat_sec}s ({lat_ms} ms, cumulative step compute time) — view full execution steps in the **Traces** tab."
+            )
+
+        elif status == "failed":
+            was_denied = any("denied by human supervisor" in (s.get("output_data") or "").lower() for s in steps) or "denied by human supervisor" in final_answer.lower()
+            if was_denied:
+                st.warning("🛑 Tool execution denied by human supervisor")
+                st.markdown("### Model Final Answer")
+                st.markdown(final_answer if final_answer else "Tool execution denied by human supervisor.")
+            else:
+                st.error(f"❌ Run Failed: {final_answer if final_answer else 'Execution error'}")
+
+            st.caption(
+                f"Trace Run ID: `#{run_id}` &bull; Latency: {lat_sec}s ({lat_ms} ms) — view full execution steps in the **Traces** tab."
+            )
 
 
 tabs = st.tabs(tab_titles)
@@ -456,6 +466,14 @@ with tab_dict["💬 Chat"]:
             selected_name = st.selectbox("Select Agent", agent_names, key="chat_agent_selector")
             current_agent = next((a for a in agents if a["name"] == selected_name), None)
 
+            # Clear run-result state when switching between agents so output doesn't leak
+            if st.session_state.get("active_chat_agent_name") is None:
+                st.session_state.active_chat_agent_name = selected_name
+            elif st.session_state.active_chat_agent_name != selected_name:
+                st.session_state.active_chat_agent_name = selected_name
+                st.session_state.latest_run_id = None
+                st.session_state.last_approval_decision = None
+
             if current_agent:
                 with st.expander("ℹ️ Agent Capabilities & System Prompt", expanded=False):
                     st.write(f"**Model:** `{current_agent['model']}` | **Temperature:** `{current_agent['temperature']}`")
@@ -475,9 +493,14 @@ with tab_dict["💬 Chat"]:
                 with col_clear:
                     if st.button("🗑️ Clear Output", key="clear_chat_out_btn"):
                         st.session_state.latest_run_id = None
+                        st.session_state.last_approval_decision = None
                         st.rerun()
 
                 if run_btn:
+                    # Clear run-result and decision state immediately so previous run never lingers
+                    st.session_state.latest_run_id = None
+                    st.session_state.last_approval_decision = None
+
                     if not user_question.strip():
                         st.error("Please enter a question or instruction.")
                     else:
@@ -1010,6 +1033,9 @@ with tab_dict["👤 Account"]:
         if st.button("Log Out"):
             st.session_state.token = None
             st.session_state.user_info = None
+            st.session_state.latest_run_id = None
+            st.session_state.last_approval_decision = None
+            st.session_state.active_chat_agent_name = None
             st.rerun()
     else:
         auth_mode = st.radio("Choose Action", ["Login", "Register"], horizontal=True)

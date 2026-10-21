@@ -548,3 +548,26 @@ As hardware budgets permit (e.g., workstations with 16 GB+ RAM or dedicated VRAM
   - Never touches `.env`, `eval/`, `tests/`, `docs/`, source code, or existing backup folders.
 - **Verification:** Ran end-to-end reset, verified all zero-counts and 10 demo rows, started backend, verified user registration and `scripts/demo_check.py` acceptance (all 5 steps passed), and executed clean final reset.
 
+---
+
+## 12. Erratum: Evaluation Benchmark Scope (`eval-v1`) vs Post-Evaluation Enhancements
+
+**Important Notice:** All empirical benchmark metrics, tables, and figures reported in Sections 5 through 10 of this document represent the performance of the system as evaluated under tag `eval-v1` (prior to post-evaluation bug fixes and improvements).
+
+1. **Integrity of Historical Results:** None of the earlier reported benchmark numbers, confidence intervals, or figures have been altered or retroactively overwritten. The frozen dataset and results remain preserved under `eval/data/` and `eval/results/`.
+2. **Analysis of Evaluated Traces (`eval/.workdir/sovereign.db`):**
+   - **Step Error Incidence:** Across all 273 runs logged in `eval/.workdir/sovereign.db` under `eval-v1`, the `Tool Execution Error: search_documents() got an unexpected keyword argument` occurred in **152 out of 273 runs (55.68%)**.
+   - **Per Agent Breakdown:**
+     - `Document Assistant`: **152 out of 242 runs (62.81%)** encountered the keyword error.
+     - `Data Analyst`: **0 out of 31 runs (0.00%)** encountered the keyword error.
+   - **Latency Impact:**
+     - Overall affected runs had a mean total latency of **33.90 s** (33,903.60 ms) vs **19.73 s** (19,732.99 ms) for unaffected runs (+71.8% latency inflation due to tool execution failure and subsequent retry prompt cycle).
+     - For `Document Assistant` specifically, affected runs averaged **33.90 s** vs **24.29 s** for unaffected runs.
+     - For `Data Analyst`, all 31 runs were unaffected, averaging **6.50 s**.
+   - **Trace-Matched Failure Reclassification:**
+     Every failed item ($n = 66$) across the benchmark suites in `eval/results/*.jsonl` was matched 1-to-1 with its execution trace in `eval/.workdir/sovereign.db` by question text and chronological execution sequence:
+     - **Tool error then abstain:** **39 runs (59.09%)** — The LLM invoked `search_documents` with a malformed argument wrapper (`"args:": ...`), caught the unexpected keyword argument error from the tool execution step, and immediately produced an abstention ("I do not know" / "documents do not contain this information") without retrieving context.
+     - **Retrieved but wrong:** **15 runs (22.73%)** — Tools executed successfully and retrieved documents/data, but the final answer failed accuracy scoring (e.g., hallucinated on unanswerable decoys or missed ground-truth keywords).
+     - **No tool call at all:** **12 runs (18.18%)** — The LLM failed JSON formatting constraints, hit formatting retry exhaustion, or abstained directly without issuing any tool call.
+3. **Post-Evaluation Fixes:** The root causes of the keyword argument error and associated abstentions were resolved in post-eval fixes (Section 11.4: extended argument normalization) on the `fixes` branch.
+
