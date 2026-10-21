@@ -145,7 +145,24 @@ def evaluate_policy(
         )
         return PolicyDecision.DENIED, reason, None
 
-    # Check (c): High risk requires human approval
+    # Check (c): For read_sql, validate query statically before requesting human approval
+    if tool_name == "read_sql":
+        from backend.tools import validate_sql_query, get_demo_db_schema
+        raw_query = tool_args.get("query", "")
+        is_valid, validation_msg = validate_sql_query(raw_query)
+        if not is_valid:
+            schema_info = get_demo_db_schema()
+            reason = f"{validation_msg} Real database schema:\n{schema_info}"
+            log_audit_event(
+                user=username,
+                action=f"policy_check:{tool_name}",
+                outcome=PolicyDecision.DENIED,
+                details=f"Run {run_id}: Invalid read_sql rejected before approval: {validation_msg}",
+                db=db,
+            )
+            return PolicyDecision.DENIED, reason, None
+
+    # Check (d): High risk requires human approval
     if tool.risk_level == "high":
         # Create a pending approval record with masked tool_args
         masked_args_str = mask_pii(json.dumps(tool_args))

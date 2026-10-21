@@ -424,8 +424,6 @@ def validate_agent_action(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 
         raise ValueError(f"Unrecognized action '{action}'. Must be 'tool' or 'final'.")
 
-        raise ValueError(f"Unrecognized action '{action}'. Must be 'tool' or 'final'.")
-
 
 def build_system_prompt(agent: Agent, allowed_tools_info: List[Dict[str, Any]]) -> str:
     """Builds the comprehensive system prompt instructing the model on available tools and JSON schema."""
@@ -473,6 +471,16 @@ Schema B (When you have enough information to answer the user):
     if getattr(settings, "PROMPT_VARIANT", "hardened").lower() != "baseline":
         prompt += """8. For ANY question asking about database records, students, departments, marks, or tables, if the `read_sql` tool is available to you, you MUST invoke `read_sql` first using Schema A. Do NOT write hypothetical SQL queries in the final answer without executing them.
 9. For ANY factual question about documents, specifications, architecture, system parameters, or deployment, if the `search_documents` tool is available to you, you MUST invoke `search_documents` first using Schema A.
+"""
+    has_sql = any(t["name"] == "read_sql" for t in allowed_tools_info)
+    if has_sql:
+        from backend.tools import get_demo_db_schema
+        schema_info = get_demo_db_schema()
+        prompt += f"""
+### DEMO DATABASE SCHEMA (SQLite):
+The demo database is SQLite. Do NOT query MySQL information_schema or execute SHOW TABLES.
+Only run valid SQLite SELECT queries against the following actual tables and columns:
+{schema_info}
 """
     return prompt
 
@@ -592,7 +600,10 @@ class AgentRunner:
         had_tool_error = any(st.step_type == "tool" and "Tool Execution Error" in (st.output_data or "") for st in existing_steps)
         had_retry = any(st.step_type == "retry" for st in existing_steps)
 
-        # Replay completed steps into messages
+        prior_latency = run.total_latency_ms or 0.0
+        failed_call_signatures = set()
+
+        # Replay completed steps into messages and detect previous tool failures
         for st in existing_steps:
             if st.step_type == "llm":
                 messages.append({"role": "assistant", "content": st.output_data})
@@ -602,6 +613,11 @@ class AgentRunner:
                 )
                 if ("Source:" in (st.output_data or "") or "search_documents" in (st.input_data or "")) and not (st.output_data or "").startswith("Tool Execution Error"):
                     sources_used.append(st.output_data)
+                if "Error" in (st.output_data or ""):
+                    failed_call_signatures.add(st.input_data)
+            elif st.step_type == "policy":
+                if "denied" in (st.output_data or "").lower() or "blocked" in (st.output_data or "").lower():
+                    failed_call_signatures.add(st.input_data)
 
         # Check if there was an approval recently decided that needs execution
         pending_approval = (
@@ -624,6 +640,10 @@ class AgentRunner:
                     tool_output = str(tool.func(**tool_args))
                 except Exception as e:
                     tool_output = f"Tool execution failed: {str(e)}"
+                    failed_call_signatures.add((tool_name, json.dumps(tool_args, sort_keys=True)))
+
+                if "Error" in tool_output:
+                    failed_call_signatures.add((tool_name, json.dumps(tool_args, sort_keys=True)))
 
                 t_lat = (time.time() - t_start) * 1000
                 record_step(
@@ -644,6 +664,13 @@ class AgentRunner:
 
             elif pending_approval.status == "denied":
                 step_counter += 1
+                tool_name = pending_approval.tool_name
+                try:
+                    denied_args = json.loads(pending_approval.tool_args)
+                    failed_call_signatures.add((tool_name, json.dumps(denied_args, sort_keys=True)))
+                except Exception:
+                    pass
+
                 record_step(
                     db=db,
                     run_id=run_id,
@@ -813,7 +840,7 @@ class AgentRunner:
 
                 run.status = "completed"
                 run.final_answer = final_answer
-                run.total_latency_ms = (time.time() - start_time) * 1000
+                run.total_latency_ms = prior_latency + ((time.time() - start_time) * 1000)
                 db.commit()
                 return {
                     "status": "completed",
@@ -828,12 +855,26 @@ class AgentRunner:
                 tool_name = action_data["tool"]
                 tool_args = normalize_tool_args(tool_name, action_data.get("args", {}))
 
-                # Guard against repeated identical tool calls causing loop thrashing
                 current_call_signature = (tool_name, json.dumps(tool_args, sort_keys=True))
-                if getattr(run, "_last_tool_call", None) == current_call_signature:
+                sig_str = f"{tool_name}({json.dumps(tool_args)})"
+                is_failed_repeat = (current_call_signature in failed_call_signatures) or (sig_str in failed_call_signatures)
+                is_immediate_repeat = getattr(run, "_last_tool_call", None) == current_call_signature
+
+                # Guard against repeated identical tool calls causing loop thrashing or re-triggering approvals
+                if is_failed_repeat or is_immediate_repeat:
+                    step_counter += 1
+                    record_step(
+                        db=db,
+                        run_id=run_id,
+                        step_number=step_counter,
+                        step_type="policy",
+                        input_data=f"Blocked duplicate tool call: {tool_name}",
+                        output_data=f"Tool '{tool_name}' with identical arguments already failed, was denied, or was executed. Repeated invocation blocked.",
+                        latency_ms=0.0,
+                    )
                     messages.append({
                         "role": "user",
-                        "content": f"Loop Warning: Tool '{tool_name}' was just executed with identical arguments. Do not repeat the same call. Formulate your final answer using the observation already gathered.",
+                        "content": f"Loop Warning: Tool '{tool_name}' with arguments {json.dumps(tool_args)} has already been attempted in this run. Do not repeat the identical call. Formulate your final answer using available information or choose a different action.",
                     })
                     continue
                 run._last_tool_call = current_call_signature
@@ -864,7 +905,7 @@ class AgentRunner:
 
                 if decision == PolicyDecision.REQUIRES_APPROVAL:
                     run.status = "paused_for_approval"
-                    run.total_latency_ms = (time.time() - start_time) * 1000
+                    run.total_latency_ms = prior_latency + ((time.time() - start_time) * 1000)
                     db.commit()
                     return {
                         "status": "paused_for_approval",
@@ -876,6 +917,8 @@ class AgentRunner:
                     }
 
                 elif decision == PolicyDecision.DENIED:
+                    failed_call_signatures.add(current_call_signature)
+                    failed_call_signatures.add(sig_str)
                     # Inform agent of policy denial so it can adapt or answer
                     messages.append({
                         "role": "user",
@@ -894,6 +937,12 @@ class AgentRunner:
                     except Exception as e:
                         tool_result = f"Tool Execution Error: {str(e)}"
                         had_tool_error = True
+                        failed_call_signatures.add(current_call_signature)
+                        failed_call_signatures.add(sig_str)
+
+                    if "Error" in tool_result:
+                        failed_call_signatures.add(current_call_signature)
+                        failed_call_signatures.add(sig_str)
 
                     t_exec_lat = (time.time() - t_exec_start) * 1000
                     record_step(
@@ -922,7 +971,7 @@ class AgentRunner:
             "Please review the trace steps for detailed observations."
         )
         run.final_answer = fallback_msg
-        run.total_latency_ms = (time.time() - start_time) * 1000
+        run.total_latency_ms = prior_latency + ((time.time() - start_time) * 1000)
         db.commit()
         return {
             "status": "completed",
