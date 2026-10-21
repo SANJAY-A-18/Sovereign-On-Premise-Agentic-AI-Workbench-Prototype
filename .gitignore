@@ -25,6 +25,7 @@ eval/.workdir/
 _to_review/
 backups/
 data_backup/
+data_backup_*/
 
 # Testing & coverage
 .coverage

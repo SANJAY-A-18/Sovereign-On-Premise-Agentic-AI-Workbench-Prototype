@@ -176,7 +176,9 @@ def run_demo_check(
                     "Register demo user",
                     f"User '{username}' registered with role '{role}'"
                 )
-        elif reg_resp.status_code == 400 and "already taken" in reg_resp.text.lower():
+        elif reg_resp.status_code == 400 and (
+            "already taken" in reg_resp.text.lower() or "already registered" in reg_resp.text.lower()
+        ):
             if is_fresh_data_dir:
                 all_passed = False
                 log_fail(
