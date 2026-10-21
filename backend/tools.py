@@ -101,6 +101,8 @@ def read_file(filename: str) -> str:
     Read file contents strictly from ./data/uploads.
     Rejects any path traversal attempts (e.g. '..', absolute paths).
     """
+    import urllib.parse
+    filename = urllib.parse.unquote(str(filename or "").strip())
     upload_root = Path(settings.UPLOAD_DIR).resolve()
 
     # Reject obvious traversal indicators before resolution

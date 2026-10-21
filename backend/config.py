@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     DATA_DIR: str = str(DATA_DIR)
 
     # Ollama Host Runtime
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
     OLLAMA_MODEL: str = "qwen2.5:3b"
     EMBED_MODEL: str = "nomic-embed-text"
     OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
