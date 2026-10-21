@@ -1,7 +1,8 @@
 # PowerShell wrapper for scripts/reset_dev_state.py
 param(
     [switch]$Force,
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$NoBackup
 )
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -14,6 +15,7 @@ if (-not (Test-Path $PythonExe)) {
 $ArgsList = @("$ScriptDir\reset_dev_state.py")
 if ($Force) { $ArgsList += "--force" }
 if ($Yes) { $ArgsList += "--yes" }
+if ($NoBackup) { $ArgsList += "--no-backup" }
 
 & $PythonExe @ArgsList
 exit $LASTEXITCODE

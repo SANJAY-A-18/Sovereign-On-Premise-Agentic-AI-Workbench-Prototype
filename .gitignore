@@ -3,7 +3,7 @@
 venv/
 ENV/
 
-# Python cache
+# Python cache & bytecode
 __pycache__/
 *.py[cod]
 *$py.class
@@ -12,20 +12,24 @@ __pycache__/
 .ruff_cache/
 
 # Local data & storage
-/data/
-!/data/.gitkeep
-!/data/demo.db
+data/
+*.db-wal
+*.db-shm
+
+# Evaluation scratch workdir
 eval/.workdir/
 
-
-# Environment variables
+# Environment variables & secrets
 .env
+
+# Cleanup and staging folders
+_cleanup_staging/
+_cleanup_manifest.md
 
 # Review and backup folders
 _to_review/
 backups/
-data_backup/
-data_backup_*/
+data_backup*
 
 # Testing & coverage
 .coverage

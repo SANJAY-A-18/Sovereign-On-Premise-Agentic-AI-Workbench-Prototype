@@ -192,6 +192,7 @@ def main():
     )
     parser.add_argument("--force", action="store_true", help="Bypass port 8000/8501 check if services are running")
     parser.add_argument("--yes", "-y", action="store_true", help="Confirm reset without interactive prompt")
+    parser.add_argument("--no-backup", action="store_true", help="Skip creating data_backup_YYYYMMDD_HHMMSS backup directory")
     args = parser.parse_args()
 
     print("=" * 80)
@@ -229,17 +230,21 @@ def main():
             print("\n[-] Reset cancelled.")
             sys.exit(0)
 
-    # 3. Create timestamped backup of data/
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_dir = PROJECT_ROOT / f"data_backup_{timestamp}"
+    # 3. Create timestamped backup of data/ (unless --no-backup)
+    if not args.no_backup:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = PROJECT_ROOT / f"data_backup_{timestamp}"
 
-    if DATA_DIR.exists():
-        try:
-            shutil.copytree(DATA_DIR, backup_dir)
-            print(f"[+] Successfully created backup: {backup_dir.name}")
-        except Exception as e:
-            print(f"[!] Warning: Backup creation encountered error: {e}")
+        if DATA_DIR.exists():
+            try:
+                shutil.copytree(DATA_DIR, backup_dir)
+                print(f"[+] Successfully created backup: {backup_dir.name}")
+            except Exception as e:
+                print(f"[!] Warning: Backup creation encountered error: {e}")
+        else:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
     else:
+        print("[*] Skipping backup creation (--no-backup specified)")
         DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     # 4. Remove sovereign.db, Chroma vector store, uploads, and logs
