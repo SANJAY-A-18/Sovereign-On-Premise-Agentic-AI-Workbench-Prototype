@@ -219,3 +219,25 @@ wsl --shutdown
 | **Zero Cloud Egress** | `socket.socket.connect` blocked in `tests/test_stage7_offline.py` | Full test suite passes under 100% network disconnection. |
 | **PII Masking** | Regex-based redaction on SSN, credit cards, emails in audit logs | Verified by `tests/test_stage3_security.py`. |
 | **Human-in-the-Loop** | Elevated actions (`read_sql`) require supervisor approval | Verified by `tests/test_policy.py`. |
+
+---
+
+## 6. Maintenance & Clean-State Reset Procedure
+
+When re-testing or resetting the development environment to a known baseline:
+
+```powershell
+# Reset development state to clean state:
+python scripts/reset_dev_state.py
+
+# Or via PowerShell wrapper:
+.\scripts\reset_dev_state.ps1
+```
+
+### Safety & Integrity Guarantees
+1. **Port Check:** Fails if active processes are detected on port 8000 or 8501 to prevent corrupting active sessions (override with `--force`).
+2. **Automated Backup:** Copies current `data/` to a timestamped folder `data_backup_YYYYMMDD_HHMMSS/` (git-ignored) prior to any deletion.
+3. **Database & Vector Reset:** Completely purges `sovereign.db`, WAL/SHM files, Chroma vector store, uploads, and logs.
+4. **Demo Database Re-Seeding:** Recreates `demo.db` with the canonical 10-student dataset and validates row counts and benchmark ground truths.
+5. **Preservation:** Never modifies `.env`, `eval/`, `tests/`, `docs/`, or source code.
+

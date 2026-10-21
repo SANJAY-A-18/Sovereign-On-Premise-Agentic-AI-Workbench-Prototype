@@ -498,3 +498,53 @@ As hardware budgets permit (e.g., workstations with 16 GB+ RAM or dedicated VRAM
   3. **Ollama Status Badge:** Adjusted header columns to `[2, 1]` and applied `white-space: nowrap` with `0.78rem` font size to `.status-pill`, eliminating badge clipping on laptop resolutions.
   4. **Document Uploader Reset:** Added dynamic session-state widget keying (`doc_uploader_key`) so the Streamlit file uploader resets to empty after successful document ingestion.
 
+### 11.4 Post-Eval Fix 4: Extended Argument Normalization for Malformed Wrapper Keys (`"args: {"`) & String Prefixes
+- **What:** Enhanced argument normalization in `backend/agent.py` by:
+  1. Adding `clean_wrapper_key()` to strip trailing whitespace, colons, and opening braces (`:{ \t`) from malformed keys (e.g. converting `"args: {"` to `"args"`).
+  2. Unwrapping string arguments with prefixes like `"query: <text>"` or `"expression: <expr>"`.
+  3. Handling tool parameters passed as raw string values directly under malformed wrapper keys.
+- **Why (Evidence First from `data/sovereign.db`):**
+  Inspection of all error steps in `data/sovereign.db` revealed real observed malformed shapes:
+  - Run 1 (Step 3): `"args:"` with trailing colon.
+  - Run 4 (Step 3): `file_path` alias mismatch instead of `filename` for `read_file`.
+  - Runs 5, 9, 13, 17, 19: Malformed wrapper keys containing opening braces, e.g. `{"action": "search_documents", "args: {": {"query": "..."}}` and `{"args: {": "query: "}`.
+  - In manual testing following the initial unwrapping fix, Run 19 produced `"args: {": "query: "` which caused `search_documents() got an unexpected keyword argument 'args: {'`, recovering on Step 4 and displaying `⚠️ Completed with a recovered tool error`.
+- **Verification:** Unit tests added in `tests/test_agent_parsing.py` for each real observed shape (34 tests passing).
+
+### 11.5 Post-Eval Fix 5: Pre-Approval SQL Static Validation, Runtime Demo Schema Injection & Tool Loop Blocking
+- **What:**
+  1. **Pre-Approval Static Validation (`backend/tools.py:validate_sql_query`):** Prior to creating an approval request, proposed SQL queries are statically checked for:
+     - Exactly single-statement execution.
+     - Strictly SELECT queries (no UPDATE, INSERT, DELETE, DROP, ATTACH, ALTER, etc.).
+     - No comment injections (`--` or `/* ... */`).
+     - Real SQLite validity via `EXPLAIN <query>` executed on a read-only SQLite connection against `demo.db`.
+     If static checks fail, `PolicyDecision.DENIED` is returned directly to the agent with the exact validation error and current SQLite schema without creating a human approval request.
+  2. **Runtime SQLite Demo Schema Injection (`backend/tools.py:get_demo_db_schema`):** Dynamically inspects `demo.db` (`sqlite_master` and `PRAGMA table_info(students)`) and injects the live table name and column definitions into the agent prompt context. This completely prevents the model from hallucinating MySQL-specific queries (e.g., `SHOW TABLES` or `information_schema.tables`).
+  3. **Duplicate Tool Execution Loop Prevention (`backend/agent.py`):** The agent tracks failed or denied tool call signatures `(tool_name, frozenset(args))`. Repeated calls to the same tool with identical arguments are blocked immediately with a recorded policy step, preventing infinite loop thrashing and duplicate supervisor approvals.
+- **Verification:** Comprehensive unit and mock tests in `tests/test_data_analyst_prevalidation.py` (9 tests passing).
+
+### 11.6 Post-Eval Fix 6: UI Robustness, Approvals Plain-Language SQL Notes, Latency Consistency & Abstentions
+- **What:**
+  1. **Status Pill Header Clipping:** Increased Streamlit main container top padding to `3.5rem !important` (and `4.8rem` on narrow viewports <= 768px) and added `.status-pill-wrapper` margins, ensuring the full pill (all borders) is visible without clipping under the Streamlit top bar.
+  2. **Data Analyst Result Lifecycle in Chat:** Persisted `latest_run_id` in `st.session_state`. When a Data Analyst run pauses for approval, the Chat tab displays `⏳ Waiting for approval — open the Approvals tab` with a refresh button. After approval or denial in the Approvals tab, returning to Chat (or clicking refresh) immediately displays the final result (status banner, answer, citations, latency, trace ID) exactly like Document Assistant. Denied runs clearly display the supervisor denial message alongside the model's final response.
+  3. **Approvals Card Plain-Language SQL Note:** When `read_sql` is requested, the card displays the proposed SQL in a dedicated code block along with a clear note: `ℹ️ Plain-language note: read-only SELECT on the demo database`, plus a link to view the run in Chat.
+  4. **Latency Consistency:** Formatted latencies with 2 decimal places in seconds and milliseconds. Added explanatory timing notes clarifying that total run latency measures cumulative step compute execution time (LLM + tool + policy) and excludes human approval pause wait time.
+  5. **Abstention Panel Heading Rename:** When the model abstains ("I do not know", "cannot find", "does not contain"), the source panel heading is dynamically renamed from "Citations & Sources" to "Retrieved context" to accurately reflect that retrieved chunks were insufficient to answer the query.
+- **Verification:** Verified via `tests/test_ui_comprehensive.py` (11 tests passing).
+
+### 11.7 Post-Eval Fix 7: Shared Institutional Knowledge Base Architecture & Object-Level Authorization
+- **What:** Clarified and verified the dual security boundary of Document Management:
+  - **Shared Knowledge Base:** Uploaded documents are treated as an institutional knowledge base queryable by all authorized agents and users for RAG retrieval.
+  - **Object-Level Authorization:** Regular (non-admin) users cannot delete or modify documents uploaded by other users (enforced with HTTP 403 and UI read-only badges), and cannot see other users' runs, traces, pending approvals, or audit logs.
+- **Verification:** Explicitly verified via `tests/test_stage3_security.py::test_object_level_authorization` and `tests/test_ui_comprehensive.py::test_ui_documents_shared_kb_and_authorization`.
+
+### 11.8 Post-Eval Tooling 8: Clean-State Development Reset Tool (`scripts/reset_dev_state.py`)
+- **What:** Created `scripts/reset_dev_state.py` (and `scripts/reset_dev_state.ps1` wrapper):
+  - Refuses to run if ports 8000 or 8501 are active (unless `--force`).
+  - Prompts for confirmation (unless `--yes`).
+  - Backs up `data/` to a timestamped folder `data_backup_YYYYMMDD_HHMMSS` (git-ignored).
+  - Purges all application state (`sovereign.db`, WAL/SHM, Chroma vector store, uploads, logs) and recreates empty directories.
+  - Re-seeds `data/demo.db` with the canonical 10-row `students` table, validating row counts, GPA > 3.80 count (4), and Meera Nair marks (89).
+  - Never touches `.env`, `eval/`, `tests/`, `docs/`, source code, or existing backup folders.
+- **Verification:** Ran end-to-end reset, verified all zero-counts and 10 demo rows, started backend, verified user registration and `scripts/demo_check.py` acceptance (all 5 steps passed), and executed clean final reset.
+

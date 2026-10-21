@@ -240,13 +240,14 @@ streamlit run ui/app.py --server.port 8501
 ```powershell
 .\.venv\Scripts\pytest -m "not live"
 ```
-**Test Count:** **74 passed tests** covering:
-- Agent JSON parsing, repair, and normalization (`tests/test_agent_parsing.py`)
+**Test Count:** **119 passed tests** (0 failed, 2 deselected live tests) covering:
+- Agent JSON parsing, recursive unwrapping, and malformed wrapper key repair (`tests/test_agent_parsing.py`)
 - API endpoints & security contracts (`tests/test_api.py`)
+- Pre-approval SQL static validation, runtime SQLite schema injection & loop prevention (`tests/test_data_analyst_prevalidation.py`)
 - Policy engine & role permissions (`tests/test_policy.py`)
 - Safe tools & sandboxing (`tests/test_tools.py`)
 - Stage 2 Feature Audit (`tests/test_stage2_audit.py`)
-- Stage 3 Security, SQLi/traversal fuzzing, & PII masking (`tests/test_stage3_security.py`)
+- Stage 3 Security, SQLi/traversal fuzzing, & object-level authorization (`tests/test_stage3_security.py`)
 - Stage 4 Robustness, Ollama crash recovery, concurrency, & WAL (`tests/test_stage4_robustness.py`)
 - Stage 7 Offline proof & loopback socket guard (`tests/test_stage7_offline.py`)
 - Stage 6 Streamlit AppTest UI verification (`tests/test_ui_comprehensive.py`, `tests/test_ui_smoke.py`)
@@ -256,6 +257,33 @@ Verifies full end-to-end integration against the running stack:
 ```powershell
 python scripts/demo_check.py --password "TestPassword123!"
 ```
+
+### Clean-State Development Reset Tool (`scripts/reset_dev_state.py`)
+Resets the development environment to a verified clean state:
+```powershell
+# Reset development state (creates timestamped backup and validates ground truths):
+python scripts/reset_dev_state.py
+
+# Or via PowerShell wrapper:
+.\scripts\reset_dev_state.ps1
+```
+Features:
+- Fails safe if servers are active on ports 8000/8501 (override with `--force`).
+- Interactive confirmation prompt (override with `--yes` or `-y`).
+- Backs up current `data/` to a timestamped folder `data_backup_YYYYMMDD_HHMMSS` (git-ignored).
+- Purges `sovereign.db`, WAL/SHM files, Chroma vector store, uploaded documents, and logs.
+- Re-seeds `data/demo.db` with the canonical 10-row students table, verifying row count, GPA > 3.80 count (4), and Meera Nair marks (89).
+
+---
+
+## Security & Authorization Model: Shared Knowledge Base
+
+The workbench implements an enterprise shared knowledge base architecture backed by strict object-level authorization:
+1. **Shared Knowledge Base:** Uploaded documents (PDF, DOCX, TXT) are embedded into ChromaDB and indexed for institutional RAG retrieval by Document Assistant. All authenticated users and authorized agents can query the knowledge base.
+2. **Object-Level Deletion Protection:** Only document owners (`uploaded_by == current_user.id`) or administrators may delete documents. Deletion requests from other users are rejected with HTTP 403 Forbidden.
+3. **Execution Trace & Run Isolation:** Normal users can only inspect their own runs and execution traces. `GET /runs/{id}` returns HTTP 403 Forbidden for other users' traces.
+4. **Approval Scoping:** Only run owners or administrators can inspect pending approvals or decide tool executions.
+5. **Audit Trail Protection:** The security audit log (`GET /audit`) is accessible strictly by users with the `admin` role.
 
 ---
 
