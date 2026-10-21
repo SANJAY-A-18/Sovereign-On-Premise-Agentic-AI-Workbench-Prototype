@@ -86,9 +86,21 @@ def test_object_level_authorization(sec_client):
         assert up_res.status_code == 200
         alice_doc_id = up_res.json()["document_id"]
 
-    # Bob cannot delete Alice's document
+    # Shared knowledge base: Bob CAN see Alice's document in the catalog
+    bob_docs = sec_client.get("/documents", headers=u2_hdr).json()
+    assert any(d["id"] == alice_doc_id for d in bob_docs)
+
+    # Bob cannot delete Alice's document (403 Forbidden)
     del_res_bob = sec_client.delete(f"/documents/{alice_doc_id}", headers=u2_hdr)
     assert del_res_bob.status_code == 403
+
+    # Normal users cannot access audit logs (403 Forbidden)
+    bob_audit_res = sec_client.get("/audit", headers=u2_hdr)
+    assert bob_audit_res.status_code == 403
+
+    # Admin CAN access audit logs
+    admin_audit_res = sec_client.get("/audit", headers=admin_hdr)
+    assert admin_audit_res.status_code == 200
 
     # Alice runs an agent
     agents = sec_client.get("/agents", headers=u1_hdr).json()
@@ -137,6 +149,10 @@ def test_object_level_authorization(sec_client):
     # Admin CAN see Alice's approval and decide it
     admin_approvals = sec_client.get("/approvals/pending", headers=admin_hdr).json()
     assert any(a["id"] == alice_approval_id for a in admin_approvals)
+
+    # Alice (document owner) CAN delete her own document
+    del_res_alice = sec_client.delete(f"/documents/{alice_doc_id}", headers=u1_hdr)
+    assert del_res_alice.status_code == 200
 
 
 # ==============================================================================

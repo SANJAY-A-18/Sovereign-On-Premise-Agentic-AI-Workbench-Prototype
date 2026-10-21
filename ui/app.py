@@ -37,10 +37,16 @@ st.markdown("""
         font-family: Consolas, "JetBrains Mono", "Courier New", monospace !important;
     }
 
-    /* Main Container Padding */
+    /* Main Container Padding - Ensure status pill and header never clip under Streamlit top bar */
     .block-container {
-        padding-top: 1.8rem;
+        padding-top: 3.5rem !important;
         padding-bottom: 3rem;
+    }
+
+    @media (max-width: 768px) {
+        .block-container {
+            padding-top: 4.8rem !important;
+        }
     }
 
     /* Sovereign Header Styling */
@@ -73,6 +79,22 @@ st.markdown("""
     }
 
     /* Status Pill Badges */
+    .status-pill-wrapper {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        padding-top: 0.5rem;
+        margin-top: 6px;
+        margin-bottom: 6px;
+    }
+
+    @media (max-width: 768px) {
+        .status-pill-wrapper {
+            justify-content: flex-start !important;
+            margin-top: 8px !important;
+        }
+    }
+
     .status-pill {
         display: inline-flex;
         align-items: center;
@@ -84,18 +106,19 @@ st.markdown("""
         letter-spacing: 0.025em;
         white-space: nowrap;
         text-transform: uppercase;
+        box-sizing: border-box;
     }
 
     .status-pill-online {
         background: rgba(16, 185, 129, 0.15);
         color: #34D399;
-        border: 1px solid rgba(16, 185, 129, 0.3);
+        border: 1.5px solid rgba(16, 185, 129, 0.4);
     }
 
     .status-pill-offline {
         background: rgba(239, 68, 68, 0.15);
         color: #F87171;
-        border: 1px solid rgba(239, 68, 68, 0.3);
+        border: 1.5px solid rgba(239, 68, 68, 0.4);
     }
 
     .role-badge-admin {
@@ -162,6 +185,10 @@ if "user_info" not in st.session_state:
     st.session_state.user_info = None
 if "active_agent" not in st.session_state:
     st.session_state.active_agent = None
+if "latest_run_id" not in st.session_state:
+    st.session_state.latest_run_id = None
+if "last_approval_decision" not in st.session_state:
+    st.session_state.last_approval_decision = None
 
 
 # ==============================================================================
@@ -228,12 +255,12 @@ with header_col1:
 with header_col2:
     if ollama_online:
         st.markdown(
-            f'<div style="display: flex; justify-content: flex-end; align-items: center; padding-top: 0.5rem;"><span class="status-pill status-pill-online">🟢 Host Ollama Online ({ollama_model_name})</span></div>',
+            f'<div class="status-pill-wrapper"><span class="status-pill status-pill-online">🟢 Host Ollama Online ({ollama_model_name})</span></div>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            '<div style="display: flex; justify-content: flex-end; align-items: center; padding-top: 0.5rem;"><span class="status-pill status-pill-offline">🔴 Host Ollama Offline</span></div>',
+            '<div class="status-pill-wrapper"><span class="status-pill status-pill-offline">🔴 Host Ollama Offline</span></div>',
             unsafe_allow_html=True,
         )
 
@@ -297,6 +324,112 @@ else:
         "👤 Account",
     ]
 
+
+def render_chat_run_result(run_id: int):
+    """
+    Renders the execution result of an agent run (Document Assistant, Data Analyst, etc.)
+    including answer, status banners, citations/retrieved context, and execution trace ID.
+    Supports polling/refresh while paused for approval or running.
+    """
+    try:
+        run_res = requests.get(f"{BACKEND_URL}/runs/{run_id}", headers=get_auth_headers(), timeout=5.0)
+        if run_res.status_code != 200:
+            st.error(f"Could not load run #{run_id} details ({run_res.status_code})")
+            return
+        run_data = run_res.json()
+    except Exception as e:
+        st.error(f"Failed to fetch run #{run_id}: {e}")
+        return
+
+    status = run_data.get("status")
+    final_answer = run_data.get("final_answer") or ""
+    steps = run_data.get("steps", [])
+    total_lat_ms = float(run_data.get("total_latency_ms") or 0.0)
+    lat_sec = round(total_lat_ms / 1000.0, 2)
+    lat_ms = round(total_lat_ms, 2)
+
+    st.markdown("---")
+    st.markdown(f"#### 🤖 Agent Response &mdash; Run `#{run_id}`")
+
+    if status == "paused_for_approval":
+        st.markdown(f"""
+        <div class="approval-box">
+            <h4>⏳ Waiting for approval &mdash; open the Approvals tab</h4>
+            <p>Run #{run_id} is currently paused awaiting supervisor confirmation for a high-risk tool call.</p>
+            <p>👉 Please switch to the <b>🛡️ Approvals</b> tab to review, approve, or deny this action, then return here.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        col_poll, _ = st.columns([1, 4])
+        with col_poll:
+            if st.button("🔄 Refresh Status", key=f"poll_paused_{run_id}", use_container_width=True):
+                st.rerun()
+
+    elif status == "running":
+        st.info(f"⏳ Run #{run_id} is currently running... Click Refresh to check status.")
+        col_poll, _ = st.columns([1, 4])
+        with col_poll:
+            if st.button("🔄 Refresh Status", key=f"poll_running_{run_id}", use_container_width=True):
+                st.rerun()
+
+    elif status == "completed":
+        has_tool_err = any(
+            s.get("step_type") == "tool" and "Tool Execution Error" in (s.get("output_data") or "")
+            for s in steps
+        )
+        has_retry = any(s.get("step_type") == "retry" for s in steps)
+        if has_tool_err or has_retry:
+            st.warning("⚠️ Completed with a recovered tool error")
+        else:
+            st.success("✅ Run Completed Successfully")
+
+        st.markdown("### Answer")
+        st.markdown(final_answer if final_answer else "_No text answer returned._")
+
+        # Collect citations / sources from search_documents steps
+        raw_sources = []
+        for s in steps:
+            if s.get("step_type") == "tool" and "search_documents" in (s.get("input_data") or ""):
+                out = s.get("output_data") or ""
+                if out and not out.startswith("Tool Execution Error"):
+                    raw_sources.append(out)
+
+        sources = [
+            src for src in raw_sources
+            if not src.startswith("Tool Execution Error") and "tool execution error" not in src.lower()
+        ]
+
+        if sources:
+            # Post-eval display nit: rename Citations panel to "Retrieved context" if answer is an abstention
+            is_abstention = any(p in final_answer.lower() for p in [
+                "i do not know", "do not know", "cannot find", "does not contain",
+                "insufficient information", "not mentioned", "no mention"
+            ])
+            if is_abstention:
+                st.markdown("#### 🔍 Retrieved context")
+            else:
+                st.markdown("#### 📚 Citations & Sources")
+
+            for src in sources:
+                st.markdown(f'<div class="citation-card">{src[:1500]}</div>', unsafe_allow_html=True)
+
+        st.caption(
+            f"Trace Run ID: `#{run_id}` &bull; Latency: {lat_sec}s ({lat_ms} ms, cumulative step compute time) — view full execution steps in the **Traces** tab."
+        )
+
+    elif status == "failed":
+        was_denied = any("denied by human supervisor" in (s.get("output_data") or "").lower() for s in steps) or "denied by human supervisor" in final_answer.lower()
+        if was_denied:
+            st.warning("🛑 Tool execution denied by human supervisor")
+            st.markdown("### Model Final Answer")
+            st.markdown(final_answer if final_answer else "Tool execution denied by human supervisor.")
+        else:
+            st.error(f"❌ Run Failed: {final_answer if final_answer else 'Execution error'}")
+
+        st.caption(
+            f"Trace Run ID: `#{run_id}` &bull; Latency: {lat_sec}s ({lat_ms} ms) — view full execution steps in the **Traces** tab."
+        )
+
+
 tabs = st.tabs(tab_titles)
 tab_dict = {title: tab for title, tab in zip(tab_titles, tabs)}
 
@@ -339,6 +472,10 @@ with tab_dict["💬 Chat"]:
                 col_run, col_clear = st.columns([1, 5])
                 with col_run:
                     run_btn = st.button("🚀 Run Agent", type="primary", use_container_width=True)
+                with col_clear:
+                    if st.button("🗑️ Clear Output", key="clear_chat_out_btn"):
+                        st.session_state.latest_run_id = None
+                        st.rerun()
 
                 if run_btn:
                     if not user_question.strip():
@@ -356,58 +493,9 @@ with tab_dict["💬 Chat"]:
 
                                 if run_resp.status_code == 200:
                                     res_data = run_resp.json()
-                                    status = res_data.get("status")
-
-                                    if status == "completed":
-                                        recovered = res_data.get("recovered_tool_error", False)
-                                        run_id = res_data.get("run_id")
-                                        if not recovered and run_id:
-                                            try:
-                                                run_detail_res = requests.get(f"{BACKEND_URL}/runs/{run_id}", headers=get_auth_headers(), timeout=3.0)
-                                                if run_detail_res.status_code == 200:
-                                                    steps = run_detail_res.json().get("steps", [])
-                                                    has_tool_err = any(s.get("step_type") == "tool" and "Tool Execution Error" in (s.get("output_data") or "") for s in steps)
-                                                    has_retry = any(s.get("step_type") == "retry" for s in steps)
-                                                    if has_tool_err or has_retry:
-                                                        recovered = True
-                                            except Exception:
-                                                pass
-
-                                        if recovered:
-                                            st.warning("⚠️ Completed with a recovered tool error")
-                                        else:
-                                            st.success("✅ Run Completed Successfully")
-
-                                        st.markdown("### Answer")
-                                        st.markdown(res_data.get("answer", ""))
-
-                                        raw_sources = res_data.get("sources", [])
-                                        # Tool errors are shown in the trace only (not under Citations)
-                                        sources = [
-                                            src for src in raw_sources
-                                            if not src.startswith("Tool Execution Error")
-                                            and "tool execution error" not in src.lower()
-                                        ]
-                                        if sources:
-                                            st.markdown("#### 📚 Citations & Sources")
-                                            for src in sources:
-                                                st.markdown(f'<div class="citation-card">{src}</div>', unsafe_allow_html=True)
-
-                                        st.caption(f"Trace Run ID: `#{res_data.get('run_id')}` — view full execution steps in the **Traces** tab.")
-
-                                    elif status == "paused_for_approval":
-                                        st.markdown(f"""
-                                        <div class="approval-box">
-                                            <h4>⚠️ Execution Paused: Human Approval Required</h4>
-                                            <p>This agent attempted to invoke high-risk tool: <b><code>{res_data.get('tool_name')}</code></b> with arguments: <code>{json.dumps(res_data.get('tool_args'))}</code>.</p>
-                                            <p>A supervisor must approve or deny this request before execution can proceed.</p>
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                                        st.info("👉 Switch to the **Approvals** tab to review, approve, or deny this action.")
-
-                                    elif status == "failed":
-                                        st.error(f"❌ Run Failed: {res_data.get('answer')}")
-
+                                    run_id = res_data.get("run_id")
+                                    st.session_state.latest_run_id = run_id
+                                    st.rerun()
                                 else:
                                     st.error(f"API Error ({run_resp.status_code}): {run_resp.text}")
 
@@ -415,6 +503,9 @@ with tab_dict["💬 Chat"]:
                                 st.error("⏱️ Execution timed out after 120s. Ollama or host may be under heavy load.")
                             except Exception as e:
                                 st.error(f"Failed to connect to backend: {str(e)}")
+
+                if st.session_state.latest_run_id:
+                    render_chat_run_result(st.session_state.latest_run_id)
 
 # ------------------------------------------------------------------------------
 # TAB: DOCUMENTS (RAG)
@@ -460,6 +551,7 @@ with tab_dict["📂 Documents"]:
 
         st.markdown("---")
         st.subheader("📚 Ingested Knowledge Base Documents")
+        st.info("ℹ️ **Shared Institutional Knowledge Base:** Documents uploaded here are indexed into the local sovereign vector database for retrieval-augmented generation (RAG) by Document Assistant. All authenticated users can query institutional documents, while object-level authorization ensures only document owners and administrators can delete records.")
 
         try:
             doc_res = requests.get(f"{BACKEND_URL}/documents", headers=get_auth_headers(), timeout=5.0)
@@ -468,25 +560,34 @@ with tab_dict["📂 Documents"]:
                 if not docs:
                     st.info("No documents uploaded yet.")
                 else:
+                    curr_user_id = st.session_state.user_info.get("user_id") if st.session_state.user_info else None
+                    curr_role = st.session_state.user_info.get("role") if st.session_state.user_info else "user"
+
                     for d in docs:
                         with st.container():
                             col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 2, 1])
                             col1.markdown(f"📄 **{d['filename']}**")
                             col2.caption(f"Format: `{d['file_type'].upper()}`")
                             col3.caption(f"Chunks: `{d['chunk_count']}`")
-                            col4.caption(f"Size: {round(d['file_size']/1024, 1)} KB | Uploaded: {d['created_at'][:10]}")
+                            uploader_str = f"User #{d.get('uploaded_by')}" if d.get('uploaded_by') else "Admin"
+                            col4.caption(f"Size: {round(d['file_size']/1024, 1)} KB | Uploaded: {d['created_at'][:10]} | Owner: {uploader_str}")
+                            
+                            can_delete = (curr_role == "admin") or (curr_user_id is not None and curr_user_id == d.get("uploaded_by"))
                             with col5:
-                                if st.button("🗑️", key=f"del_doc_{d['id']}", help=f"Delete {d['filename']} and vectors"):
-                                    del_res = requests.delete(
-                                        f"{BACKEND_URL}/documents/{d['id']}",
-                                        headers=get_auth_headers(),
-                                        timeout=10.0,
-                                    )
-                                    if del_res.status_code == 200:
-                                        st.success(f"Deleted '{d['filename']}'")
-                                        st.rerun()
-                                    else:
-                                        st.error(f"Delete failed: {del_res.text}")
+                                if can_delete:
+                                    if st.button("🗑️", key=f"del_doc_{d['id']}", help=f"Delete {d['filename']} and vectors"):
+                                        del_res = requests.delete(
+                                            f"{BACKEND_URL}/documents/{d['id']}",
+                                            headers=get_auth_headers(),
+                                            timeout=10.0,
+                                        )
+                                        if del_res.status_code == 200:
+                                            st.success(f"Deleted '{d['filename']}'")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"Delete failed: {del_res.text}")
+                                else:
+                                    st.caption("🔒 Shared")
                             st.divider()
             else:
                 st.error("Failed to load document list.")
@@ -644,10 +745,15 @@ with tab_dict["🔍 Traces"]:
                     "failed": "🔴",
                 }.get(r["status"], "⚪")
 
+                total_lat_ms = float(r.get("total_latency_ms") or 0.0)
+                lat_sec = round(total_lat_ms / 1000.0, 2)
+                lat_ms = round(total_lat_ms, 2)
+
                 with st.expander(
-                    f"{status_color} Run #{r['id']} | Agent: {r['agent_name']} | Status: {r['status'].upper()} | Latency: {r['total_latency_ms']} ms",
+                    f"{status_color} Run #{r['id']} | Agent: {r['agent_name']} | Status: {r['status'].upper()} | Compute Latency: {lat_sec}s ({lat_ms} ms)",
                     expanded=False,
                 ):
+                    st.caption(f"ℹ️ **Timing Note:** Latency ({lat_sec}s / {lat_ms} ms) measures cumulative step compute execution time (LLM generation + tool execution + policy). For paused runs, it excludes human approval pause wait time.")
                     st.markdown(f"**User:** `{r['username']}` | **Date:** `{r['created_at'][:19]}`")
                     st.markdown(f"**Question:** {r['question']}")
                     if r.get("final_answer"):
@@ -665,11 +771,13 @@ with tab_dict["🔍 Traces"]:
                                 for s in steps:
                                     st_type = s["step_type"].lower()
                                     pill_class = f"trace-{st_type}" if st_type in ("llm", "tool", "policy", "retry") else "trace-llm"
+                                    s_lat_ms = round(float(s.get("latency_ms") or 0.0), 2)
+                                    s_lat_sec = round(s_lat_ms / 1000.0, 2)
                                     
                                     col1, col2 = st.columns([1, 6])
                                     with col1:
                                         st.markdown(
-                                            f'<span class="trace-step-type {pill_class}">{s["step_type"]}</span><br><small>{s["latency_ms"]} ms</small>',
+                                            f'<span class="trace-step-type {pill_class}">{s["step_type"]}</span><br><small>{s_lat_sec}s ({s_lat_ms} ms)</small>',
                                             unsafe_allow_html=True,
                                         )
                                     with col2:
@@ -691,6 +799,11 @@ with tab_dict["🛡️ Approvals"]:
     if not st.session_state.token:
         st.warning("⚠️ Please log in to manage approvals.")
     else:
+        # Show outcome notification for recently decided approval with link to run
+        if st.session_state.get("last_approval_decision"):
+            dec = st.session_state["last_approval_decision"]
+            st.info(f"📋 **Recent Decision Outcome:** Request `#{dec['id']}` was **{dec['decision'].upper()}** for Run `#{dec['run_id']}`. [👉 Open Chat tab to view final answer](#💬-chat) &bull; View trace in **🔍 Traces** tab.")
+
         try:
             apprv_res = requests.get(f"{BACKEND_URL}/approvals/pending", headers=get_auth_headers(), timeout=5.0)
             pending = apprv_res.json() if apprv_res.status_code == 200 else []
@@ -702,16 +815,39 @@ with tab_dict["🛡️ Approvals"]:
             st.success("✅ No pending approvals! All agent operations are running smoothly.")
         else:
             for item in pending:
+                is_sql = (item.get("tool_name") == "read_sql")
+                sql_query = ""
+                if is_sql:
+                    raw_args = item.get("tool_args", "")
+                    try:
+                        parsed = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                        if isinstance(parsed, dict):
+                            sql_query = parsed.get("query", str(raw_args))
+                        else:
+                            sql_query = str(parsed)
+                    except Exception:
+                        sql_query = str(raw_args)
+
                 with st.container():
                     st.markdown(f"""
                     <div class="approval-box">
                         <h4>Request #{item['id']} &mdash; Tool: <code>{item['tool_name']}</code></h4>
                         <p><b>Requested By:</b> <code>{item['username']}</code> &bull; <b>Run ID:</b> #{item['run_id']}</p>
                         <p><b>User Question:</b> {item['question']}</p>
-                        <p><b>Proposed Action Arguments:</b></p>
-                        <pre style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px;">{item['tool_args']}</pre>
                     </div>
                     """, unsafe_allow_html=True)
+
+                    if is_sql and sql_query:
+                        st.markdown("**Proposed SQL Query:**")
+                        st.code(sql_query, language="sql")
+                        st.markdown("""
+                        <div style="background: rgba(59, 130, 246, 0.12); border-left: 3px solid #3B82F6; padding: 8px 14px; border-radius: 6px; margin: 6px 0 12px 0; font-size: 0.88rem; color: #93C5FD;">
+                            ℹ️ <b>Plain-language note:</b> read-only SELECT on the demo database
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("**Proposed Action Arguments:**")
+                        st.code(str(item.get("tool_args", "")), language="json" if "{" in str(item.get("tool_args", "")) else "text")
 
                     btn_col1, btn_col2, _ = st.columns([1, 1, 4])
                     with btn_col1:
@@ -724,7 +860,13 @@ with tab_dict["🛡️ Approvals"]:
                                     timeout=130.0,
                                 )
                                 if dec_res.status_code == 200:
-                                    st.success(f"Approval #{item['id']} granted. Run resumed!")
+                                    st.session_state.last_approval_decision = {
+                                        "id": item["id"],
+                                        "decision": "approved",
+                                        "run_id": item["run_id"],
+                                    }
+                                    st.session_state.latest_run_id = item["run_id"]
+                                    st.success(f"Approval #{item['id']} granted for Run #{item['run_id']}! Agent completed.")
                                     st.rerun()
                                 else:
                                     st.error(f"Failed to record decision: {dec_res.text}")
@@ -739,7 +881,13 @@ with tab_dict["🛡️ Approvals"]:
                                     timeout=130.0,
                                 )
                                 if dec_res.status_code == 200:
-                                    st.warning(f"Approval #{item['id']} denied.")
+                                    st.session_state.last_approval_decision = {
+                                        "id": item["id"],
+                                        "decision": "denied",
+                                        "run_id": item["run_id"],
+                                    }
+                                    st.session_state.latest_run_id = item["run_id"]
+                                    st.warning(f"Approval #{item['id']} denied for Run #{item['run_id']}.")
                                     st.rerun()
                                 else:
                                     st.error(f"Failed to record decision: {dec_res.text}")

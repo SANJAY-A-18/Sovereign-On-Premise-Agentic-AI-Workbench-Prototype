@@ -246,3 +246,105 @@ def test_ui_agents_tab_create_and_edit_forms(mock_backend_success):
         at.session_state["user_info"] = {"user_id": 1, "username": "admin_user", "role": "admin"}
         at.run()
         assert len(at.exception) == 0
+
+
+def test_ui_chat_latest_run_persistence_and_rendering(mock_backend_success):
+    """Chat tab persists latest_run_id and renders completed answer with citations."""
+    def _mock_run_detail(url, *args, **kwargs):
+        if "/auth/me" in url:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {"user_id": 2, "username": "alice", "role": "user"}
+            return resp
+        elif "/runs/99" in url:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "id": 99,
+                "question": "What is the capital?",
+                "status": "completed",
+                "final_answer": "I do not know based on the provided documents.",
+                "total_latency_ms": 1250.456,
+                "steps": [
+                    {
+                        "step_number": 1,
+                        "step_type": "tool",
+                        "input_data": '{"action": "search_documents", "query": "capital"}',
+                        "output_data": "Document snippet about geography.",
+                        "latency_ms": 350.2,
+                    }
+                ],
+            }
+            return resp
+        return mock_backend_success(url, *args, **kwargs)
+
+    with patch("requests.get", side_effect=_mock_run_detail):
+        at = AppTest.from_file("ui/app.py", default_timeout=15)
+        at.session_state["token"] = "valid-jwt"
+        at.session_state["user_info"] = {"user_id": 2, "username": "alice", "role": "user"}
+        at.session_state["latest_run_id"] = 99
+        at.run()
+        assert len(at.exception) == 0
+
+        # Check that markdown contains the abstention panel rename "Retrieved context"
+        md_text = " ".join([m.value for m in at.markdown])
+        assert "Retrieved context" in md_text
+        assert "I do not know" in md_text
+        assert "99" in md_text
+
+
+def test_ui_approvals_plain_language_note_and_outcome(mock_backend_success):
+    """Approvals tab shows plain-language note for SQL queries and outcome banner."""
+    with patch("requests.get", side_effect=mock_backend_success):
+        at = AppTest.from_file("ui/app.py", default_timeout=15)
+        at.session_state["token"] = "valid-admin-jwt"
+        at.session_state["user_info"] = {"user_id": 1, "username": "admin_user", "role": "admin"}
+        at.session_state["last_approval_decision"] = {
+            "id": 5,
+            "decision": "approved",
+            "run_id": 12,
+        }
+        at.run()
+        assert len(at.exception) == 0
+
+        info_text = " ".join([inf.value for inf in at.info])
+        assert "read-only SELECT on the demo database" in info_text or any("demo database" in m.value for m in at.markdown)
+        assert "APPROVED" in info_text
+
+
+def test_ui_documents_shared_kb_and_authorization(mock_backend_success):
+    """Normal user cannot delete documents uploaded by other users."""
+    def _mock_normal_user_docs(url, *args, **kwargs):
+        if "/auth/me" in url:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {"user_id": 999, "username": "bob_user", "role": "user"}
+            return resp
+        elif "/documents" in url:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = [
+                {
+                    "id": 10,
+                    "filename": "admin_policy.txt",
+                    "file_type": "txt",
+                    "file_size": 2048,
+                    "chunk_count": 3,
+                    "uploaded_by": 1,  # Uploaded by Admin (id=1), not Bob (id=999)
+                    "created_at": "2026-10-15T10:00:00",
+                }
+            ]
+            return resp
+        return mock_backend_success(url, *args, **kwargs)
+
+    with patch("requests.get", side_effect=_mock_normal_user_docs):
+        at = AppTest.from_file("ui/app.py", default_timeout=15)
+        at.session_state["token"] = "valid-user-jwt"
+        at.session_state["user_info"] = {"user_id": 999, "username": "bob_user", "role": "user"}
+        at.run()
+        assert len(at.exception) == 0
+
+        button_keys = [b.key for b in at.button if b.key]
+        assert not any("del_doc_10" in k for k in button_keys)
+        captions = " ".join([c.value for c in at.caption])
+        assert "Shared" in captions
