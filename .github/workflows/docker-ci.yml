@@ -27,6 +27,12 @@ jobs:
       - name: Validate Docker Compose Configuration
         run: docker compose config
 
+      - name: Validate Docker Compose Hub Configuration
+        env:
+          DOCKERHUB_USERNAME: test
+          JWT_SECRET_KEY: ci-dummy-secret-for-config-check-only
+        run: docker compose -f docker-compose.hub.yml config
+
       - name: Build Docker Images (Backend & UI)
         run: docker compose build
 
