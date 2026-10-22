@@ -457,3 +457,215 @@ As hardware budgets permit (e.g., workstations with 16 GB+ RAM or dedicated VRAM
 2. **Automated Prompt Tuning:** Formally compare chain-of-thought system prompts against direct tool instruction prompts.
 3. **Hybrid Sparse + Dense Retrieval:** Introduce BM25 lexical ranking alongside `nomic-embed-text` dense vector embeddings for hybrid retrieval.
 4. **Engine Error Recovery:** Retry or recover on Ollama token-repeat HTTP 500 aborts (such as resetting the context window or backoff/temperature adjustment upon encountering `prediction aborted, token repeat limit reached`). This was not implemented in the benchmarked system; doing so now would constitute an unmeasured post-hoc modification.
+
+---
+
+## 11. Post-Evaluation Fixes (Post-eval-v1)
+
+> [!NOTE]
+> **Baseline Integrity Notice:** All baseline benchmark results, confidence intervals, and frozen datasets reported in Sections 1–8 represent the evaluated system at Git tag `eval-v1`. The modifications detailed below represent post-evaluation bug fixes and refinements identified during manual UI testing. No test sets were altered, no baseline results were overwritten, and no tuning against evaluation questions was performed.
+
+### 11.1 Bug Fix 1: Tool Argument Wrapper Key Normalization
+- **What:** Implemented recursive unwrapping (`unwrap_tool_args` and `normalize_tool_args` in `backend/agent.py`) supporting wrapper keys `args`, `arguments`, `parameters`, `params`, `input` (whether passed as Python dictionaries or JSON-encoded strings, with or without trailing colons such as `args:`), alongside canonical parameter mapping across all registered tools.
+- **Why:** During manual UI interaction, small models (`qwen2.5:3b`) emitted tool call JSON with wrapper keys such as `{"action": "search_documents", "args:": {"query": "..."}}` or `{"tool": "search_documents", "args": {"args": {"query": "..."}}}`, which previously caused Python to raise `TypeError: search_documents() got an unexpected keyword argument 'args:'`.
+- **Investigation & Evidence (Read-Only Search):**
+  - **`eval/results/*.jsonl` (13 files):** Exactly **0 occurrences** of `unexpected keyword argument`. Evaluation JSONL logs record final answers and top-level outcomes; runs where the model recovered in a subsequent turn recorded the final answer rather than intermediate step exceptions.
+  - **`eval/.workdir/sovereign.db`:** Exactly **152 step occurrences across 152 distinct runs** where the model emitted `{"action": "search_documents", "args:": ...}`, generating an intermediate `Tool Execution Error: search_documents() got an unexpected keyword argument 'args:'` at Step #3. In inspected traces (e.g. Run #228), the model observed the error and self-corrected in Step #4 by emitting `{"action": "search_documents", "args": ...}`, succeeding at the expense of 2 additional reasoning turns and latency.
+  - **`data/sovereign.db`:** Exactly **6 step occurrences across 6 runs**.
+  - **`data_backup/sovereign.db`:** Exactly **2 step occurrences across 2 runs**.
+- **Verification:** Unit tests in `tests/test_agent_parsing.py` verify all 17 wrapper shapes (including JSON strings, colon suffixes, and nested dicts). Regression tests using the exact queries `"How many days can I borrow a book and what is the overdue fine?"` and `"What is the hostel curfew time?"` against `sample_policy.txt` pass cleanly with zero tool errors.
+
+### 11.2 Refinement 2: Boundary-Preserving Text Chunker
+- **What:** Replaced the character-slicing chunker in `backend/rag.py` (`TextChunker.chunk_text`) with a boundary-preserving algorithm that prioritizes paragraph breaks (`\n\n`), line breaks (`\n`), sentence boundaries (`. `, `? `, `! `), and word boundaries, never splitting mid-word while honoring `chunk_size` and `chunk_overlap`.
+- **Why:** The previous chunker sliced text blindly at character offsets (`cleaned_text[start:start+size]`), bisecting words mid-token (e.g., splitting `"Hall tickets"` into `"Hall ti"` and `"ety goggles"` in `sample_policy.txt`), degrading semantic embeddings and precision.
+- **Empirical Evidence (Retrieval-Only E1b Comparative Evaluation):**
+  Post-evaluation retrieval-only benchmarks were run across the 18-document distractor corpus ($n = 24$ answerable items) for chunk sizes 300, 500, and 800 characters without modifying frozen data:
+
+| Chunk Size | Baseline Chunk Hit@1 (`eval-v1`) | Post-Eval Chunk Hit@1 (`fixes`) | Baseline Chunk Hit@3 (`eval-v1`) | Post-Eval Chunk Hit@3 (`fixes`) | Baseline MRR (`eval-v1`) | Post-Eval MRR (`fixes`) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **300 chars** | 75.0% (18/24) | **83.3%** (20/24, +8.3%) | 87.5% (21/24) | **100.0%** (24/24, +12.5%) | 0.8056 | **0.9097** (+0.1041) |
+| **500 chars** | 75.0% (18/24) | **95.8%** (23/24, +20.8%) | 91.7% (22/24) | **100.0%** (24/24, +8.3%) | 0.8333 | **0.9792** (+0.1459) |
+| **800 chars** | 83.3% (20/24) | **83.3%** (20/24, unchanged) | 95.8% (23/24) | **100.0%** (24/24, +4.2%) | 0.8889 | **0.8958** (+0.0069) |
+
+- **Key Takeaways:**
+  1. **100.0% Top-3 Recall:** With word and sentence integrity preserved, Chunk Hit@3 reached 100.0% (24/24) across all chunk sizes.
+  2. **Substantial Precision Gain at 500 chars:** Chunk Hit@1 increased from 75.0% to 95.8% (23/24), and MRR jumped from 0.8333 to 0.9792, demonstrating that avoiding mid-clause cuts allows dense embeddings to match queries directly to the top-ranked chunk.
+
+### 11.3 UI Fixes: Citations, Status, Badge Clipping & Uploader Reset
+- **What & Why:**
+  1. **Citations Filtering:** Tool execution errors are now strictly excluded from the "Citations & Sources" panel and only rendered in the execution trace under the **Traces** tab.
+  2. **Recovered Status Display:** The Chat interface displays `⚠️ Completed with a recovered tool error` whenever an intermediate tool failure or format retry occurred but the agent subsequently finalized successfully.
+  3. **Ollama Status Badge:** Adjusted header columns to `[2, 1]` and applied `white-space: nowrap` with `0.78rem` font size to `.status-pill`, eliminating badge clipping on laptop resolutions.
+  4. **Document Uploader Reset:** Added dynamic session-state widget keying (`doc_uploader_key`) so the Streamlit file uploader resets to empty after successful document ingestion.
+
+### 11.4 Post-Eval Fix 4: Extended Argument Normalization for Malformed Wrapper Keys (`"args: {"`) & String Prefixes
+- **What:** Enhanced argument normalization in `backend/agent.py` by:
+  1. Adding `clean_wrapper_key()` to strip trailing whitespace, colons, and opening braces (`:{ \t`) from malformed keys (e.g. converting `"args: {"` to `"args"`).
+  2. Unwrapping string arguments with prefixes like `"query: <text>"` or `"expression: <expr>"`.
+  3. Handling tool parameters passed as raw string values directly under malformed wrapper keys.
+- **Why (Evidence First from `data/sovereign.db`):**
+  Inspection of all error steps in `data/sovereign.db` revealed real observed malformed shapes:
+  - Run 1 (Step 3): `"args:"` with trailing colon.
+  - Run 4 (Step 3): `file_path` alias mismatch instead of `filename` for `read_file`.
+  - Runs 5, 9, 13, 17, 19: Malformed wrapper keys containing opening braces, e.g. `{"action": "search_documents", "args: {": {"query": "..."}}` and `{"args: {": "query: "}`.
+  - In manual testing following the initial unwrapping fix, Run 19 produced `"args: {": "query: "` which caused `search_documents() got an unexpected keyword argument 'args: {'`, recovering on Step 4 and displaying `⚠️ Completed with a recovered tool error`.
+- **Verification:** Unit tests added in `tests/test_agent_parsing.py` for each real observed shape (34 tests passing).
+
+### 11.5 Post-Eval Fix 5: Pre-Approval SQL Static Validation, Runtime Demo Schema Injection & Tool Loop Blocking
+- **What:**
+  1. **Pre-Approval Static Validation (`backend/tools.py:validate_sql_query`):** Prior to creating an approval request, proposed SQL queries are statically checked for:
+     - Exactly single-statement execution.
+     - Strictly SELECT queries (no UPDATE, INSERT, DELETE, DROP, ATTACH, ALTER, etc.).
+     - No comment injections (`--` or `/* ... */`).
+     - Real SQLite validity via `EXPLAIN <query>` executed on a read-only SQLite connection against `demo.db`.
+     If static checks fail, `PolicyDecision.DENIED` is returned directly to the agent with the exact validation error and current SQLite schema without creating a human approval request.
+  2. **Runtime SQLite Demo Schema Injection (`backend/tools.py:get_demo_db_schema`):** Dynamically inspects `demo.db` (`sqlite_master` and `PRAGMA table_info(students)`) and injects the live table name and column definitions into the agent prompt context. This completely prevents the model from hallucinating MySQL-specific queries (e.g., `SHOW TABLES` or `information_schema.tables`).
+  3. **Duplicate Tool Execution Loop Prevention (`backend/agent.py`):** The agent tracks failed or denied tool call signatures `(tool_name, frozenset(args))`. Repeated calls to the same tool with identical arguments are blocked immediately with a recorded policy step, preventing infinite loop thrashing and duplicate supervisor approvals.
+- **Verification:** Comprehensive unit and mock tests in `tests/test_data_analyst_prevalidation.py` (9 tests passing).
+
+### 11.6 Post-Eval Fix 6: UI Robustness, Approvals Plain-Language SQL Notes, Latency Consistency & Abstentions
+- **What:**
+  1. **Status Pill Header Clipping:** Increased Streamlit main container top padding to `3.5rem !important` (and `4.8rem` on narrow viewports <= 768px) and added `.status-pill-wrapper` margins, ensuring the full pill (all borders) is visible without clipping under the Streamlit top bar.
+  2. **Data Analyst Result Lifecycle in Chat:** Persisted `latest_run_id` in `st.session_state`. When a Data Analyst run pauses for approval, the Chat tab displays `⏳ Waiting for approval — open the Approvals tab` with a refresh button. After approval or denial in the Approvals tab, returning to Chat (or clicking refresh) immediately displays the final result (status banner, answer, citations, latency, trace ID) exactly like Document Assistant. Denied runs clearly display the supervisor denial message alongside the model's final response.
+  3. **Approvals Card Plain-Language SQL Note:** When `read_sql` is requested, the card displays the proposed SQL in a dedicated code block along with a clear note: `ℹ️ Plain-language note: read-only SELECT on the demo database`, plus a link to view the run in Chat.
+  4. **Latency Consistency:** Formatted latencies with 2 decimal places in seconds and milliseconds. Added explanatory timing notes clarifying that total run latency measures cumulative step compute execution time (LLM + tool + policy) and excludes human approval pause wait time.
+  5. **Abstention Panel Heading Rename:** When the model abstains ("I do not know", "cannot find", "does not contain"), the source panel heading is dynamically renamed from "Citations & Sources" to "Retrieved context" to accurately reflect that retrieved chunks were insufficient to answer the query.
+- **Verification:** Verified via `tests/test_ui_comprehensive.py` (11 tests passing).
+
+### 11.7 Post-Eval Fix 7: Shared Institutional Knowledge Base Architecture & Object-Level Authorization
+- **What:** Clarified and verified the dual security boundary of Document Management:
+  - **Shared Knowledge Base:** Uploaded documents are treated as an institutional knowledge base queryable by all authorized agents and users for RAG retrieval.
+  - **Object-Level Authorization:** Regular (non-admin) users cannot delete or modify documents uploaded by other users (enforced with HTTP 403 and UI read-only badges), and cannot see other users' runs, traces, pending approvals, or audit logs.
+- **Verification:** Explicitly verified via `tests/test_stage3_security.py::test_object_level_authorization` and `tests/test_ui_comprehensive.py::test_ui_documents_shared_kb_and_authorization`.
+
+### 11.8 Post-Eval Tooling 8: Clean-State Development Reset Tool (`scripts/reset_dev_state.py`)
+- **What:** Created `scripts/reset_dev_state.py` (and `scripts/reset_dev_state.ps1` wrapper):
+  - Refuses to run if ports 8000 or 8501 are active (unless `--force`).
+  - Prompts for confirmation (unless `--yes`).
+  - Backs up `data/` to a timestamped folder `data_backup_YYYYMMDD_HHMMSS` (git-ignored).
+  - Purges all application state (`sovereign.db`, WAL/SHM, Chroma vector store, uploads, logs) and recreates empty directories.
+  - Re-seeds `data/demo.db` with the canonical 10-row `students` table, validating row counts, GPA > 3.80 count (4), and Meera Nair marks (89).
+  - Never touches `.env`, `eval/`, `tests/`, `docs/`, source code, or existing backup folders.
+- **Verification:** Ran end-to-end reset, verified all zero-counts and 10 demo rows, started backend, verified user registration and `scripts/demo_check.py` acceptance (all 5 steps passed), and executed clean final reset.
+
+---
+
+## 12. Erratum: Evaluation Benchmark Scope (`eval-v1`) vs Post-Evaluation Enhancements
+
+**Important Notice:** All empirical benchmark metrics, tables, and figures reported in Sections 5 through 10 of this document represent the performance of the system as evaluated under tag `eval-v1` (prior to post-evaluation bug fixes and improvements).
+
+1. **Integrity of Historical Results:** None of the earlier reported benchmark numbers, confidence intervals, or figures have been altered or retroactively overwritten. The frozen dataset and results remain preserved under `eval/data/` and `eval/results/`.
+2. **Analysis of Evaluated Traces (`eval/.workdir/sovereign.db`):**
+   - **Step Error Incidence:** Across all 273 runs logged in `eval/.workdir/sovereign.db` under `eval-v1`, the `Tool Execution Error: search_documents() got an unexpected keyword argument` occurred in **152 out of 273 runs (55.68%)**.
+   - **Per Agent Breakdown:**
+     - `Document Assistant`: **152 out of 242 runs (62.81%)** encountered the keyword error.
+     - `Data Analyst`: **0 out of 31 runs (0.00%)** encountered the keyword error.
+   - **Latency Impact:**
+     - Within `Document Assistant` runs specifically, affected runs averaged **33.90 s** (33,903.60 ms) vs **24.29 s** (24,291.68 ms) for unaffected runs (a difference of about **+9.6 s**). The cause of this latency difference is not established (e.g., whether attributable to retry prompt overhead, token generation length, or host load variation).
+     - Across all benchmark suites combined, affected runs averaged **33.90 s** vs **19.73 s** for unaffected runs (which included faster Data Analyst runs averaging 6.50 s).
+     - For `Data Analyst`, all 31 runs were unaffected, averaging **6.50 s**.
+   - **Trace-Matched Failure Reclassification:**
+     Every failed item ($n = 66$) across the benchmark suites in `eval/results/*.jsonl` was matched 1-to-1 with its execution trace in `eval/.workdir/sovereign.db` by question text and chronological execution sequence:
+     - **Tool error then abstain:** **39 runs (59.09%)** — The LLM invoked `search_documents` with a malformed argument wrapper (`"args:": ...`), caught the unexpected keyword argument error from the tool execution step, and immediately produced an abstention ("I do not know" / "documents do not contain this information") without retrieving context.
+     - **Retrieved but wrong:** **15 runs (22.73%)** — Tools executed successfully and retrieved documents/data, but the final answer failed accuracy scoring (e.g., hallucinated on unanswerable decoys or missed ground-truth keywords).
+     - **No tool call at all:** **12 runs (18.18%)** — The LLM failed JSON formatting constraints, hit formatting retry exhaustion, or abstained directly without issuing any tool call.
+3. **Post-Evaluation Fixes:** The root causes of the keyword argument error and associated abstentions were resolved in post-eval fixes (Section 11.4: extended argument normalization) on the `fixes` branch.
+
+
+---
+
+## 13. Post-Fix Canonical Benchmark Evaluation (`fixes` Branch)
+
+Following post-evaluation fixes on the `fixes` branch (principally argument normalization supporting trailing colons/nested wrappers in `backend/agent.py` and boundary-preserving chunking in `backend/rag.py`), an end-to-end evaluation benchmark was re-executed under identical headless benchmark conditions against the 45 canonical evaluation items (`eval/results/postfix_canonical.jsonl`).
+
+### 13.1 Performance Summary and Metrics Comparison
+
+| Benchmark Run | Tag / Git Ref | Total Items ($n$) | Valid Response Rate (95% Wilson CI) | Task Success Rate (95% Wilson CI) | Total Latency / Runtime | Mean Latency per Item | Peak Ollama RSS |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Canonical Run 1** | `eval-v1` | 45 | **100.0%** [92.1%, 100.0%] | **80.0%** (36/45) [66.2%, 89.1%] | 1,048.6 s | 23.30 s | 2,126.2 MB |
+| **Canonical Run 2** | `eval-v1` | 45 | **97.8%** [88.4%, 99.6%] | **80.0%** (36/45) [66.2%, 89.1%] | 1,126.3 s | 25.03 s | 2,246.5 MB |
+| **Canonical Pooled** | `eval-v1` | 90 (approx.)* | **98.9%** [94.0%, 99.8%] | **80.0%** (72/90) [70.6%, 86.9%] | N/A (pooled) | N/A | 2,246.5 MB |
+| **Post-Fix Canonical** | `fixes` | 45 | **100.0%** [92.1%, 100.0%] | **86.7%** (39/45) [73.8%, 93.7%] | **1,025 s** (1,024.5 s) | 22.61 s | 2,508.0 MB |
+
+*\*Note: Pooled confidence interval is approximate due to repeated testing of the same 45 items.*
+
+### 13.2 Paired Exact McNemar Tests
+
+Across identical 45 evaluation items, paired contingency analysis reveals:
+
+1. **Post-Fix Canonical vs Canonical Run 1:**
+   - Both Pass: **32**
+   - Both Fail: **2**
+   - $b$ (Run 1 Fail $\to$ Post-Fix Pass): **7 items**
+   - $c$ (Run 1 Pass $\to$ Post-Fix Fail): **4 items**
+   - Total Discordant ($b + c$): **11 items**
+   - **Exact Two-Sided McNemar $p$-value:** **0.54883** (statistically not significant; 95% Wilson CIs overlap).
+
+2. **Post-Fix Canonical vs Canonical Run 2:**
+   - Both Pass: **33**
+   - Both Fail: **3**
+   - $b$ (Run 2 Fail $\to$ Post-Fix Pass): **6 items**
+   - $c$ (Run 2 Pass $\to$ Post-Fix Fail): **3 items**
+   - Total Discordant ($b + c$): **9 items**
+   - **Exact Two-Sided McNemar $p$-value:** **0.50781** (statistically not significant; 95% Wilson CIs overlap).
+
+### 13.3 Trace Inspection & Classification of Failed Items (`eval/.workdir/sovereign.db`)
+
+Across all execution steps in `eval/.workdir/sovereign.db` for the post-fix run (Runs 4–48), the incidence of `Tool Execution Error: search_documents() got an unexpected keyword argument` was exactly **0 steps (0.0%)**, down from 152 steps (55.68%) in `eval-v1`.
+
+Exactly **6 items failed** ($39/45 = 86.7\%$ success). Trace inspection of the database classifies each failure:
+
+1. **`rag_q06` (Run 9) — Abstained after degenerate retrieval:**
+   - **Question:** *"What is the absolute minimum attendance percentage floor below which no condonation is allowed?"*
+   - **Expected:** `['65', 'percent']` (from `attendance_rules.txt`, Clause 2.1).
+   - **Tool Steps:** Step 1: Model emitted malformed wrapper `{"action": "search_documents", "args: {": "query"}`. Normalizer extracted query string `"query"`. Step 3: Tool searched for `"query"` and returned `library_rules.txt` (Chunk #2). Step 4: Model concluded documents did not contain the floor information.
+   - **Actual Answer:** *"The provided documents do not contain the information needed to answer the question about the absolute minimum attendance percentage floor."*
+
+2. **`rag_q09` (Run 12) — Abstained after successful retrieval:**
+   - **Question:** *"What are the exact morning biometric scan window hours at Kiosk-7?"*
+   - **Expected:** `['08:15', '08:35']` (from `attendance_rules.txt`, Section 4).
+   - **Tool Steps:** Step 1: Model searched `"query"` $\to$ `library_rules.txt`. Step 4: Model searched `"morning biometric scan window hours at Kiosk-7"` $\to$ successfully retrieved `attendance_rules.txt` Chunk #5 containing `"The morning logging window opens at 08:15 AM and closes promptly at 08:35 AM at Kiosk-7."` Step 7: Model repeated the identical tool call; Step 8: System policy blocked repeated duplicate invocation. Step 9: Model abstained despite the presence of the exact hours in the context window.
+   - **Actual Answer:** *"The provided documents do not contain the specific information about the morning biometric scan window hours at Kiosk-7."*
+
+3. **`rag_q22` (Run 25) — Retrieved but wrong answer (Reasoning error):**
+   - **Question:** *"A student arrived late for their exam. At what point is hall admission shut down, and what is the earliest time a student is permitted to hand in their paper and exit?"*
+   - **Expected:** `['20', '45']` (from `exam_regulations.txt`, Section 3.2: 20 minutes entry cutoff, 45 minutes earliest exit).
+   - **Tool Steps:** Step 1: Searched question. Step 3: Successfully retrieved `exam_regulations.txt` Chunk #1 (`"...hall entry is strictly barred 20 minutes after the commencement bell rings. No candidate shall be permitted to submit their answer script or leave the hall during the first 45 minutes..."`). Step 4: Model answered 20 minutes for entry, but hallucinated 15 minutes for exit by conflating the arrival window ("15 minutes before") with exit cutoff.
+   - **Actual Answer:** *"Based on the provided documents, hall admission is strictly barred 20 minutes after the commencement bell rings. Therefore, the earliest time a student is permitted to hand in their paper and exit is 15 minutes after the scheduled start time of the exam..."*
+
+4. **`rag_q23` (Run 26) — Retrieved but wrong answer (Lexical keyword mismatch):**
+   - **Question:** *"Can undergraduate students take out rare manuscripts from Wing C, and what special badge is needed for on-site inspection?"*
+   - **Expected:** `['cannot', 'CLRC-SEC-9']` (from `library_rules.txt`, Chunk #2).
+   - **Tool Steps:** Step 1: Searched question. Step 3: Successfully retrieved `library_rules.txt` Chunk #2. Step 4: Model accurately answered the question in natural language using the phrase *"are not allowed to borrow"* instead of the exact modal verb *"cannot"*, failing the automated keyword matching filter.
+   - **Actual Answer:** *"Undergraduate students are not allowed to borrow rare manuscripts from Wing C (2nd Floor) for personal use. They can only be inspected on-site using a special visitor badge, which is CLRC-SEC-9..."*
+
+5. **`rag_q25` (Run 28) — Retrieved but wrong answer (Decoy hallucination):**
+   - **Question:** *"What is the permissible attendance concession for students participating in blood donation drives on campus?"* (Unanswerable decoy).
+   - **Expected:** Honest abstention (e.g., `['do not know', 'not mentioned', 'does not contain']`).
+   - **Tool Steps:** Step 1: Searched query. Step 3: Retrieved `attendance_rules.txt` Chunk #1 (which mentions a 10% duty concession for national sports/symposia). Step 4: Model hallucinated that blood donation drives qualify for the 10% concession.
+   - **Actual Answer:** *"Based on the provided documents, students participating in blood donation drives on campus may receive an official duty allowance of up to 10 percent. However, this allowance is strictly for students representing the institute in recognized national tournaments..."*
+
+6. **`rag_q26` (Run 29) — Retrieved but wrong answer (Decoy hallucination):**
+   - **Question:** *"What is the specific stipend deduction penalty for graduate teaching assistants who fail to meet the 82 percent attendance threshold?"* (Unanswerable decoy).
+   - **Expected:** Honest abstention (e.g., `['do not know', 'not mentioned', 'no information']`).
+   - **Tool Steps:** Step 1: Searched query. Step 3: Retrieved `attendance_rules.txt` Chunk #1 (which mentions an undergraduate condonation surcharge of Rs 2,450). Step 4: Model conflated the undergraduate fine with a graduate TA stipend deduction.
+   - **Actual Answer:** *"The specific stipend deduction penalty for graduate teaching assistants who fail to meet the 82 percent attendance threshold is a condonation surcharge of Rs 2,450 per course. Additionally, these candidates must complete 18 hours of supervised remediation..."*
+
+### 13.4 Methodological Caveats
+
+1. **Sample Size & Variance ($n = 45$):** This post-fix benchmark represents a **single execution run** of $n = 45$ items. Given stochastic generation in small 3B models (even at temperature 0.2), point estimates are subject to sampling variance. The 95% Wilson confidence interval for task success spans **[73.8%, 93.7%]**, overlapping with baseline runs.
+2. **Train/Test Overlap (Non-Held-Out Set):** The post-evaluation fixes (specifically argument unwrapping patterns) were developed after analyzing failure traces observed on this benchmark set under `eval-v1`. This run demonstrates that the specific keyword argument crash and word-splitting chunking bugs were mitigated, but it does **not** constitute an evaluation on a novel, held-out distribution of questions.
+3. **Preservation of Evaluation Tag Integrity:** In accordance with scientific integrity guidelines, **zero baseline evaluation numbers, tables, confidence intervals, or figures** reported in Sections 1 through 10 have been altered or overwritten. All baseline artifacts remain permanently preserved under tag `eval-v1`.
+
+### 13.5 Known Remaining Defects and Error Modes
+
+Detailed examination of the post-fix execution traces reveals four specific remaining defect patterns:
+
+1. **Degenerate-Query Argument Normalization ($n = 2$ steps across Runs 9 and 12):**
+   In Step 1 of both Run 9 (`rag_q06`) and Run 12 (`rag_q09`), small model tokenization emitted a malformed JSON argument key with an unclosed opening brace: `{"action": "search_documents", "args: {": "query"}`. While the normalization logic in `backend/agent.py` successfully stripped the wrapper key prefix `args: {`, it extracted the literal parameter name string `"query"` as the query payload rather than the intended natural-language prompt. Consequently, the tool executed `search_documents(query="query")`, retrieving irrelevant chunks (`library_rules.txt`). While Run 12 recovered on Turn 2 by re-querying with the full question string, Run 9 abstained immediately without issuing a second query.
+2. **Duplicate-Call Policy Block Inducing Abstention (`rag_q09`):**
+   In Run 12 (`rag_q09`), the agent successfully retrieved Chunk #5 of `attendance_rules.txt` on Step 6, which explicitly contained the exact window (*"The morning logging window opens at 08:15 AM and closes promptly at 08:35 AM at Kiosk-7"*). However, on Step 7 the model redundantly re-emitted the identical tool call. The engine's safety policy correctly intercepted the repeated invocation to prevent an infinite reasoning loop. Faced with the duplicate block notification, the 3B model failed to inspect the existing context and prematurely emitted a negative abstention (*"The provided documents do not contain the specific information..."*).
+3. **Keyword Scorer False Negative (`rag_q23`):**
+   For item `rag_q23`, the model successfully retrieved Chunk #2 of `library_rules.txt` and accurately answered: *"Undergraduate students are not allowed to borrow rare manuscripts from Wing C (2nd Floor) for personal use. They can only be inspected on-site using a special visitor badge, which is CLRC-SEC-9."* However, the frozen benchmark regex required the exact modal verb `"cannot"`. Because the model phrased its refusal as *"are not allowed to borrow"*, the automated evaluator scored the item as a failure. In adherence to benchmark protocol, the headline result strictly remains **39/45 (86.7%)** under the frozen rubric.
+4. **Fabricated Answers on Decoy Questions (`rag_q25`, `rag_q26`):**
+   On unanswerable distractor queries designed to test honest abstention, the 3B model exhibited hallucination by conflating adjacent policy rules: in `rag_q25`, it falsely asserted that campus blood donation drives qualify for a 10% duty attendance concession (borrowed from national tournament rules in Clause 2.3); in `rag_q26`, it claimed graduate teaching assistants face a Rs 2,450 stipend deduction (borrowed from the undergraduate condonation surcharge in Clause 2.4). Small models continue to show vulnerability against adversarial unanswerable prompts when topical overlap exists with valid policy text.

@@ -9,7 +9,7 @@ import operator
 from pathlib import Path
 import re
 import sqlite3
-from typing import Dict, Any, Callable, Optional, List
+from typing import Dict, Any, Callable, Optional, List, Tuple
 from pydantic import BaseModel
 
 from backend.config import settings
@@ -101,6 +101,8 @@ def read_file(filename: str) -> str:
     Read file contents strictly from ./data/uploads.
     Rejects any path traversal attempts (e.g. '..', absolute paths).
     """
+    import urllib.parse
+    filename = urllib.parse.unquote(str(filename or "").strip())
     upload_root = Path(settings.UPLOAD_DIR).resolve()
 
     # Reject obvious traversal indicators before resolution
@@ -130,6 +132,84 @@ def read_file(filename: str) -> str:
         return f"Error reading file: {str(e)}"
 
 
+def get_demo_db_path() -> Path:
+    if settings.DEMO_DATABASE_URL.startswith("sqlite:///"):
+        return Path(settings.DEMO_DATABASE_URL.replace("sqlite:///", "")).resolve()
+    return (Path(settings.DATA_DIR) / "demo.db").resolve()
+
+
+def get_demo_db_schema() -> str:
+    """Read table and column names at runtime from demo SQLite DB."""
+    demo_db_path = get_demo_db_path()
+    if not demo_db_path.exists():
+        return "Demo database is not initialized."
+    try:
+        conn = sqlite3.connect(f"file:{demo_db_path}?mode=ro", uri=True)
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        tables = [t[0] for t in cur.fetchall()]
+        schema_lines = []
+        for t in tables:
+            cur.execute(f"PRAGMA table_info({t})")
+            cols = [f"{col[1]} ({col[2]})" for col in cur.fetchall()]
+            schema_lines.append(f"Table '{t}': columns = [{', '.join(cols)}]")
+        conn.close()
+        return "\n".join(schema_lines) if schema_lines else "No tables found."
+    except Exception as e:
+        return f"Error reading schema: {e}"
+
+
+def validate_sql_query(query: str) -> Tuple[bool, str]:
+    """
+    Validate static read_sql checks:
+    - Non-empty
+    - Single statement (no internal semicolons)
+    - No SQL comments
+    - Starts strictly with SELECT
+    - No disallowed mutation/administrative keywords
+    - SQLite-parsable via EXPLAIN on read-only connection
+    Returns (is_valid, normalized_query_or_error_message).
+    """
+    cleaned = (query or "").strip()
+    if not cleaned:
+        return False, "Error: Empty SQL query provided."
+
+    normalized = cleaned.rstrip(";").strip()
+    if ";" in normalized:
+        return False, "Security Error: Multiple SQL statements are not permitted."
+
+    if "--" in normalized or "/*" in normalized or "*/" in normalized:
+        return False, "Security Error: SQL comments are not permitted."
+
+    tokens = normalized.split()
+    if not tokens or tokens[0].upper() != "SELECT":
+        return False, "Security Error: Only single SELECT queries are permitted on the demo database."
+
+    disallowed_keywords = {
+        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE",
+        "REPLACE", "EXEC", "EXECUTE", "PRAGMA", "ATTACH", "DETACH", "VACUUM",
+        "SQLITE_MASTER", "SQLITE_SCHEMA", "SQLITE_TEMP_MASTER", "INTO"
+    }
+    upper_query_words = set(re.sub(r"[^A-Z0-9_]", "", w.upper()) for w in tokens)
+    forbidden = upper_query_words.intersection(disallowed_keywords)
+    if forbidden:
+        return False, f"Security Error: Disallowed keyword(s) detected: {', '.join(sorted(forbidden))}"
+
+    demo_db_path = get_demo_db_path()
+    if not demo_db_path.exists():
+        return False, f"Error: Demo database ({demo_db_path.name}) has not been initialized."
+
+    try:
+        conn = sqlite3.connect(f"file:{demo_db_path}?mode=ro", uri=True)
+        cursor = conn.cursor()
+        cursor.execute(f"EXPLAIN {normalized}")
+        conn.close()
+    except Exception as e:
+        return False, f"SQL Error: {str(e)}"
+
+    return True, normalized
+
+
 # ==============================================================================
 # 3. Read SQL (SELECT-only on data/demo.db)
 # ==============================================================================
@@ -139,43 +219,12 @@ def read_sql(query: str) -> str:
     Execute a single read-only SELECT query against demo.db (e.g. students table).
     Rejects any non-SELECT statements, mutations, or multiple queries.
     """
-    cleaned = query.strip()
-    if not cleaned:
-        return "Error: Empty SQL query provided."
+    is_valid, validated_or_err = validate_sql_query(query)
+    if not is_valid:
+        return validated_or_err
 
-    # Strip single trailing semicolon if present
-    normalized = cleaned.rstrip(";").strip()
-
-    # Reject multiple statements
-    if ";" in normalized:
-        return "Security Error: Multiple SQL statements are not permitted."
-
-    # Reject SQL comments to prevent evasion tricks
-    if "--" in normalized or "/*" in normalized or "*/" in normalized:
-        return "Security Error: SQL comments are not permitted."
-
-    # Validate that the statement begins strictly with SELECT
-    tokens = normalized.split()
-    if not tokens or tokens[0].upper() != "SELECT":
-        return "Security Error: Only single SELECT queries are permitted on the demo database."
-
-    # Disallow dangerous SQL keywords anywhere in the query
-    disallowed_keywords = {
-        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE",
-        "REPLACE", "EXEC", "EXECUTE", "PRAGMA", "ATTACH", "DETACH", "VACUUM",
-        "SQLITE_MASTER", "SQLITE_SCHEMA", "SQLITE_TEMP_MASTER", "INTO"
-    }
-    upper_query_words = set(re.sub(r"[^A-Z0-9_]", "", w.upper()) for w in tokens)
-    forbidden = upper_query_words.intersection(disallowed_keywords)
-    if forbidden:
-        return f"Security Error: Disallowed keyword(s) detected: {', '.join(sorted(forbidden))}"
-
-    if settings.DEMO_DATABASE_URL.startswith("sqlite:///"):
-        demo_db_path = Path(settings.DEMO_DATABASE_URL.replace("sqlite:///", "")).resolve()
-    else:
-        demo_db_path = (Path(settings.DATA_DIR) / "demo.db").resolve()
-    if not demo_db_path.exists():
-        return f"Error: Demo database ({demo_db_path.name}) has not been initialized."
+    normalized = validated_or_err
+    demo_db_path = get_demo_db_path()
 
     try:
         conn = sqlite3.connect(f"file:{demo_db_path}?mode=ro", uri=True)

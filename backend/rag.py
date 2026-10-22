@@ -6,6 +6,7 @@ embedding via host Ollama (nomic-embed-text), and storage in embedded ChromaDB.
 
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import re
 import pypdf
 import docx
 import chromadb
@@ -49,7 +50,7 @@ class DocumentParser:
 
 
 class TextChunker:
-    """Chunks text into small, overlapping windows."""
+    """Chunks text into windows respecting sentence, line, and word boundaries."""
 
     @staticmethod
     def chunk_text(
@@ -72,13 +73,69 @@ class TextChunker:
         text_len = len(cleaned_text)
 
         while start < text_len:
-            end = min(start + size, text_len)
+            if start + size >= text_len:
+                end = text_len
+            else:
+                limit = start + size
+                min_break = start + max(1, size // 3)
+                sub = cleaned_text[start:limit]
+
+                # 1. Prefer paragraph break (\n\n)
+                p_idx = sub.rfind('\n\n')
+                if p_idx != -1 and (start + p_idx) >= min_break:
+                    end = start + p_idx + 2
+                else:
+                    # 2. Prefer line break (\n)
+                    l_idx = sub.rfind('\n')
+                    if l_idx != -1 and (start + l_idx) >= min_break:
+                        end = start + l_idx + 1
+                    else:
+                        # 3. Prefer sentence boundary (. , ? , ! )
+                        sent_matches = list(re.finditer(r'[\.\?!]\s+', sub))
+                        valid_sent = [m for m in sent_matches if (start + m.end()) >= min_break]
+                        if valid_sent:
+                            end = start + valid_sent[-1].end()
+                        else:
+                            # 4. Semicolon or colon
+                            semi_matches = list(re.finditer(r'[;:]\s+', sub))
+                            valid_semi = [m for m in semi_matches if (start + m.end()) >= min_break]
+                            if valid_semi:
+                                end = start + valid_semi[-1].end()
+                            else:
+                                # 5. Any whitespace backwards from limit (never split mid-word)
+                                w_matches = list(re.finditer(r'\s+', sub))
+                                if w_matches:
+                                    end = start + w_matches[-1].start()
+                                else:
+                                    # 6. No whitespace within limit: search forward to complete word
+                                    fwd = re.search(r'\s+', cleaned_text[limit:])
+                                    if fwd:
+                                        end = limit + fwd.start()
+                                    else:
+                                        end = text_len
+
             chunk = cleaned_text[start:end].strip()
             if chunk:
                 chunks.append(chunk)
+
             if end >= text_len:
                 break
-            start += size - overlap
+
+            # Calculate next chunk start with overlap, never starting mid-word
+            target_start = end - overlap
+            if target_start <= start:
+                start = end
+            else:
+                # Advance to start of next word if target_start falls mid-word
+                pos = target_start
+                while pos < end and not cleaned_text[pos].isspace():
+                    pos += 1
+                while pos < end and cleaned_text[pos].isspace():
+                    pos += 1
+                if pos < end and pos > start:
+                    start = pos
+                else:
+                    start = end
 
         return chunks
 

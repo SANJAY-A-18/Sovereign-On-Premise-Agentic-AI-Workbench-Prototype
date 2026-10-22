@@ -56,13 +56,36 @@ def client():
     return TestClient(app)
 
 
-def test_health_check_endpoint(client):
-    res = client.get("/health")
+def test_liveness_check_endpoint(client):
+    """Verify /live endpoint returns 200 and alive status without querying Ollama."""
+    res = client.get("/live")
     assert res.status_code == 200
     data = res.json()
-    assert data["status"] == "healthy"
-    assert "ollama" in data
-    assert "configured_chat_model" in data["ollama"]
+    assert data["status"] == "alive"
+    assert "timestamp" in data
+    assert "system" in data
+
+
+from unittest.mock import patch
+
+
+def test_health_check_endpoint(client):
+    mock_health = {
+        "reachable": True,
+        "base_url": "http://127.0.0.1:11434",
+        "configured_chat_model": "qwen2.5:3b",
+        "chat_model_present": True,
+        "configured_embed_model": "nomic-embed-text",
+        "embed_model_present": True,
+        "available_models": ["qwen2.5:3b", "nomic-embed-text"],
+    }
+    with patch("backend.main.ollama_client.check_health", return_value=mock_health):
+        res = client.get("/health")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "healthy"
+        assert "ollama" in data
+        assert "configured_chat_model" in data["ollama"]
 
 
 def test_auth_first_user_admin_second_user_regular(client):

@@ -82,79 +82,320 @@ def extract_json_from_llm(raw: str) -> Dict[str, Any]:
     raise ValueError("Extracted JSON root is not an object/dictionary.")
 
 
+WRAPPER_KEYS = {"args", "arguments", "parameters", "params", "input"}
+
+
+def clean_wrapper_key(k: str) -> str:
+    """Normalize potential wrapper key by stripping leading/trailing whitespace, colons, and open braces."""
+    return str(k).strip().rstrip(":{ \t").strip().lower()
+
+
+def unwrap_tool_args(args: Any, tool_name: Optional[str] = None) -> Any:
+    """
+    Recursively unwrap wrapper keys (args, arguments, parameters, params, input),
+    whether provided as dictionaries or JSON strings, including keys with trailing colons
+    or opening braces like 'args: {'.
+    """
+    clean_tool = (tool_name or "").strip().lower()
+
+    # Step 1: If args is a string, try JSON parsing
+    if isinstance(args, str):
+        cleaned_str = args.strip()
+        if (cleaned_str.startswith("{") and cleaned_str.endswith("}")) or (cleaned_str.startswith("[") and cleaned_str.endswith("]")):
+            try:
+                parsed = json.loads(cleaned_str)
+                return unwrap_tool_args(parsed, tool_name=clean_tool)
+            except Exception:
+                pass
+        # Raw non-JSON string for a tool
+        if clean_tool == "calculator":
+            if cleaned_str.lower().startswith("expression:"):
+                cleaned_str = cleaned_str[11:].strip()
+            return {"expression": cleaned_str}
+        elif clean_tool == "read_file":
+            if cleaned_str.lower().startswith("filename:"):
+                cleaned_str = cleaned_str[9:].strip()
+            elif cleaned_str.lower().startswith("file_path:"):
+                cleaned_str = cleaned_str[10:].strip()
+            return {"filename": cleaned_str}
+        elif clean_tool in ("search_documents", "read_sql"):
+            if cleaned_str.lower().startswith("query:"):
+                cleaned_str = cleaned_str[6:].strip()
+            return {"query": cleaned_str}
+        return {"query": cleaned_str}
+
+    if not isinstance(args, dict):
+        return {}
+
+    current = dict(args)
+
+    # Unwrap if current contains wrapper keys
+    max_depth = 5
+    for _ in range(max_depth):
+        if not isinstance(current, dict):
+            break
+
+        # Check if single key is a wrapper key
+        if len(current) == 1:
+            k = next(iter(current.keys()))
+            norm_k = clean_wrapper_key(k)
+            if norm_k in WRAPPER_KEYS:
+                val = current[k]
+                if isinstance(val, str):
+                    try:
+                        parsed_val = json.loads(val.strip())
+                        if isinstance(parsed_val, dict):
+                            current = parsed_val
+                            continue
+                        elif isinstance(parsed_val, (int, float, bool)):
+                            val = str(parsed_val)
+                    except Exception:
+                        pass
+                    clean_val = str(val).strip()
+                    if clean_tool == "calculator":
+                        if clean_val.lower().startswith("expression:"):
+                            clean_val = clean_val[11:].strip()
+                        return {"expression": clean_val}
+                    elif clean_tool == "read_file":
+                        if clean_val.lower().startswith("filename:"):
+                            clean_val = clean_val[9:].strip()
+                        elif clean_val.lower().startswith("file_path:"):
+                            clean_val = clean_val[10:].strip()
+                        return {"filename": clean_val}
+                    else:
+                        if clean_val.lower().startswith("query:"):
+                            clean_val = clean_val[6:].strip()
+                        return {"query": clean_val}
+                elif isinstance(val, dict):
+                    current = val
+                    continue
+                else:
+                    return {}
+            else:
+                break
+        else:
+            # Check if there are metadata keys like action, tool, thought alongside a single wrapper key
+            wrapper_candidates = [
+                k for k in current.keys()
+                if clean_wrapper_key(k) in WRAPPER_KEYS
+            ]
+            non_wrapper = [
+                k for k in current.keys()
+                if k not in wrapper_candidates
+            ]
+            if len(wrapper_candidates) == 1 and all(k.strip().lower() in ("action", "tool", "name", "thought") for k in non_wrapper):
+                val = current[wrapper_candidates[0]]
+                if isinstance(val, str):
+                    try:
+                        parsed_val = json.loads(val.strip())
+                        if isinstance(parsed_val, dict):
+                            current = parsed_val
+                            continue
+                    except Exception:
+                        pass
+                    clean_val = str(val).strip()
+                    if clean_tool == "calculator":
+                        if clean_val.lower().startswith("expression:"):
+                            clean_val = clean_val[11:].strip()
+                        return {"expression": clean_val}
+                    elif clean_tool == "read_file":
+                        if clean_val.lower().startswith("filename:"):
+                            clean_val = clean_val[9:].strip()
+                        elif clean_val.lower().startswith("file_path:"):
+                            clean_val = clean_val[10:].strip()
+                        return {"filename": clean_val}
+                    else:
+                        if clean_val.lower().startswith("query:"):
+                            clean_val = clean_val[6:].strip()
+                        return {"query": clean_val}
+                elif isinstance(val, dict):
+                    current = val
+                    continue
+            break
+
+    return current
+
+
+def normalize_tool_args(tool_name: str, args: Any) -> Dict[str, Any]:
+    """
+    Unwraps and normalizes tool arguments to guarantee matching signature for tool functions.
+    Never passes wrapper keys like 'args', 'parameters', etc. to the underlying tool function.
+    """
+    clean_tool = (tool_name or "").strip().lower()
+    unwrapped = unwrap_tool_args(args, tool_name=clean_tool)
+
+    if not isinstance(unwrapped, dict):
+        unwrapped = {}
+    else:
+        unwrapped = dict(unwrapped)
+
+    # Normalize tool parameter names
+    if clean_tool == "search_documents":
+        if "query" not in unwrapped:
+            for alt in ["question", "text", "search", "expression", "prompt", "input", "query:"]:
+                if alt in unwrapped:
+                    val = unwrapped.pop(alt)
+                    if isinstance(val, dict):
+                        sub = normalize_tool_args(clean_tool, val)
+                        if "query" in sub:
+                            unwrapped["query"] = sub["query"]
+                            break
+                    unwrapped["query"] = str(val)
+                    break
+        # If any wrapper key still lingers, unwrap it
+        for wk in list(unwrapped.keys()):
+            if clean_wrapper_key(wk) in WRAPPER_KEYS and wk != "query":
+                nested = unwrapped.pop(wk)
+                if isinstance(nested, dict):
+                    for nk, nv in nested.items():
+                        if nk not in unwrapped:
+                            unwrapped[nk] = nv
+                elif isinstance(nested, str) and "query" not in unwrapped:
+                    clean_nested = nested.strip()
+                    if clean_nested.lower().startswith("query:"):
+                        clean_nested = clean_nested[6:].strip()
+                    unwrapped["query"] = clean_nested
+        if "query" in unwrapped and isinstance(unwrapped["query"], str):
+            if unwrapped["query"].strip().lower().startswith("query:"):
+                unwrapped["query"] = unwrapped["query"].strip()[6:].strip()
+
+    elif clean_tool == "calculator":
+        if "expression" not in unwrapped:
+            for alt in ["query", "input", "calc", "math", "question", "expr", "expression:"]:
+                if alt in unwrapped:
+                    val = unwrapped.pop(alt)
+                    if isinstance(val, dict):
+                        sub = normalize_tool_args(clean_tool, val)
+                        if "expression" in sub:
+                            unwrapped["expression"] = sub["expression"]
+                            break
+                    unwrapped["expression"] = str(val)
+                    break
+        for wk in list(unwrapped.keys()):
+            if clean_wrapper_key(wk) in WRAPPER_KEYS and wk != "expression":
+                nested = unwrapped.pop(wk)
+                if isinstance(nested, dict):
+                    for nk, nv in nested.items():
+                        if nk not in unwrapped:
+                            unwrapped[nk] = nv
+                elif isinstance(nested, str) and "expression" not in unwrapped:
+                    clean_nested = nested.strip()
+                    if clean_nested.lower().startswith("expression:"):
+                        clean_nested = clean_nested[11:].strip()
+                    unwrapped["expression"] = clean_nested
+        if "expression" in unwrapped and isinstance(unwrapped["expression"], str):
+            if unwrapped["expression"].strip().lower().startswith("expression:"):
+                unwrapped["expression"] = unwrapped["expression"].strip()[11:].strip()
+
+    elif clean_tool == "read_sql":
+        if "query" not in unwrapped:
+            for alt in ["sql", "statement", "command", "expression", "input", "query:"]:
+                if alt in unwrapped:
+                    val = unwrapped.pop(alt)
+                    if isinstance(val, dict):
+                        sub = normalize_tool_args(clean_tool, val)
+                        if "query" in sub:
+                            unwrapped["query"] = sub["query"]
+                            break
+                    unwrapped["query"] = str(val)
+                    break
+        for wk in list(unwrapped.keys()):
+            if clean_wrapper_key(wk) in WRAPPER_KEYS and wk != "query":
+                nested = unwrapped.pop(wk)
+                if isinstance(nested, dict):
+                    for nk, nv in nested.items():
+                        if nk not in unwrapped:
+                            unwrapped[nk] = nv
+                elif isinstance(nested, str) and "query" not in unwrapped:
+                    clean_nested = nested.strip()
+                    if clean_nested.lower().startswith("query:"):
+                        clean_nested = clean_nested[6:].strip()
+                    unwrapped["query"] = clean_nested
+        if "query" in unwrapped and isinstance(unwrapped["query"], str):
+            if unwrapped["query"].strip().lower().startswith("query:"):
+                unwrapped["query"] = unwrapped["query"].strip()[6:].strip()
+
+    elif clean_tool == "read_file":
+        if "filename" not in unwrapped:
+            for alt in ["file_path", "path", "filename", "file", "target", "input", "filename:", "file_path:"]:
+                if alt in unwrapped:
+                    val = unwrapped.pop(alt)
+                    if isinstance(val, dict):
+                        sub = normalize_tool_args(clean_tool, val)
+                        if "filename" in sub:
+                            unwrapped["filename"] = sub["filename"]
+                            break
+                    unwrapped["filename"] = str(val)
+                    break
+        for wk in list(unwrapped.keys()):
+            if clean_wrapper_key(wk) in WRAPPER_KEYS and wk != "filename":
+                nested = unwrapped.pop(wk)
+                if isinstance(nested, dict):
+                    for nk, nv in nested.items():
+                        if nk not in unwrapped:
+                            unwrapped[nk] = nv
+                elif isinstance(nested, str) and "filename" not in unwrapped:
+                    clean_nested = nested.strip()
+                    if clean_nested.lower().startswith("filename:"):
+                        clean_nested = clean_nested[9:].strip()
+                    elif clean_nested.lower().startswith("file_path:"):
+                        clean_nested = clean_nested[10:].strip()
+                    unwrapped["filename"] = clean_nested
+        if "filename" in unwrapped and isinstance(unwrapped["filename"], str):
+            if unwrapped["filename"].strip().lower().startswith("filename:"):
+                unwrapped["filename"] = unwrapped["filename"].strip()[9:].strip()
+            elif unwrapped["filename"].strip().lower().startswith("file_path:"):
+                unwrapped["filename"] = unwrapped["filename"].strip()[10:].strip()
+
+    return unwrapped
+
+
 def validate_agent_action(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     """
     Validates that the parsed JSON strictly conforms to the agent protocol:
     Either {"action": "tool", "tool": "<name>", "args": {...}}
     Or     {"action": "final", "answer": "<text>"}
-    Forgiving for small model variations (e.g. putting tool name in action).
+    Forgiving for small model variations (e.g. putting tool name in action or wrapping args).
     """
+    if "function" in data and isinstance(data["function"], dict):
+        data = dict(data["function"])
+    elif "tool_call" in data and isinstance(data["tool_call"], dict):
+        data = dict(data["tool_call"])
+
     action = data.get("action")
     if not action:
-        if data.get("tool"):
+        if data.get("tool") or data.get("name"):
             action = "tool"
         elif data.get("answer") is not None:
             action = "final"
         else:
-            raise ValueError("Missing 'action' field in JSON. Must be 'tool' or 'final'.")
+            from backend.tools import tool_registry
+            for k in data.keys():
+                if tool_registry.get(k.lower().strip()) is not None:
+                    action = k.lower().strip()
+                    break
+            if not action:
+                raise ValueError("Missing 'action' field in JSON. Must be 'tool' or 'final'.")
 
     action = str(action).lower().strip()
     if action == "tool":
-        tool_name = data.get("tool")
+        tool_name = data.get("tool") or data.get("name")
         if not tool_name or not isinstance(tool_name, str):
             raise ValueError("Tool action must specify a 'tool' string name.")
-        args = data.get("args")
-        if args is None:
-            for k in ["args:", "arguments", "parameters", "params", "input"]:
-                if k in data and isinstance(data[k], dict):
-                    args = data[k]
-                    break
-        if args is None:
-            args = data.get("args", {})
-        if not isinstance(args, dict):
-            # If args passed as string or list, try converting
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except Exception:
-                    args = {"query": args}
-            else:
-                args = {}
-        if not args:
-            reserved = {"action", "tool", "thought", "args", "args:", "arguments", "parameters"}
-            fallback_args = {k: v for k, v in data.items() if k not in reserved}
-            if fallback_args:
-                args = fallback_args
 
-        # If args is wrapped in a single key like {"args:": {...}} or {"arguments": {...}}
-        if isinstance(args, dict) and len(args) == 1:
-            k = next(iter(args.keys()))
-            if k.rstrip(":") in ("args", "arguments", "parameters", "params") and isinstance(args[k], dict):
-                args = args[k]
+        raw_args = None
+        for k in data.keys():
+            if clean_wrapper_key(k) in WRAPPER_KEYS:
+                raw_args = data[k]
+                break
 
-        # Normalize common tool parameter names
-        clean_tool = tool_name.strip()
-        if clean_tool == "search_documents" and "query" not in args:
-            for alt in ["question", "text", "search", "expression", "prompt"]:
-                if alt in args:
-                    args["query"] = args.pop(alt)
-                    break
-        elif clean_tool == "calculator" and "expression" not in args:
-            for alt in ["query", "input", "calc", "math", "question"]:
-                if alt in args:
-                    args["expression"] = args.pop(alt)
-                    break
-        elif clean_tool == "read_sql" and "query" not in args:
-            for alt in ["sql", "statement", "command", "expression", "input"]:
-                if alt in args:
-                    args["query"] = args.pop(alt)
-                    break
-        elif clean_tool == "read_file" and "file_path" not in args:
-            for alt in ["path", "filename", "file", "target"]:
-                if alt in args:
-                    args["file_path"] = args[alt]
-                    break
-        return "tool", {"tool": clean_tool, "args": args}
+        if raw_args is None:
+            reserved = {"action", "tool", "name", "thought"}
+            fallback_args = {k: v for k, v in data.items() if k.lower().strip() not in reserved and clean_wrapper_key(k) not in WRAPPER_KEYS}
+            raw_args = fallback_args if fallback_args else {}
+
+        normalized_args = normalize_tool_args(tool_name.strip(), raw_args)
+        return "tool", {"tool": tool_name.strip(), "args": normalized_args}
 
     elif action == "final":
         answer = data.get("answer")
@@ -167,42 +408,19 @@ def validate_agent_action(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         from backend.tools import tool_registry
         if tool_registry.get(action) is not None:
             tool_name = action
-            args = data.get("args", {})
-            if not isinstance(args, dict):
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {"expression": args} if action == "calculator" else {"query": args}
-                else:
-                    args = {}
-            if not args:
-                reserved = {"action", "tool", "thought", "args"}
-                fallback_args = {k: v for k, v in data.items() if k not in reserved}
-                if fallback_args:
-                    args = fallback_args
-            clean_tool = tool_name.strip()
-            if clean_tool == "search_documents" and "query" not in args:
-                for alt in ["question", "text", "search", "expression", "prompt"]:
-                    if alt in args:
-                        args["query"] = args.pop(alt)
-                        break
-            elif clean_tool == "calculator" and "expression" not in args:
-                for alt in ["query", "input", "calc", "math", "question"]:
-                    if alt in args:
-                        args["expression"] = args.pop(alt)
-                        break
-            elif clean_tool == "read_sql" and "query" not in args:
-                for alt in ["sql", "statement", "command", "expression", "input"]:
-                    if alt in args:
-                        args["query"] = args.pop(alt)
-                        break
-            elif clean_tool == "read_file" and "file_path" not in args:
-                for alt in ["path", "filename", "file", "target"]:
-                    if alt in args:
-                        args["file_path"] = args.pop(alt)
-                        break
-            return "tool", {"tool": clean_tool, "args": args}
+            raw_args = None
+            for k in data.keys():
+                if clean_wrapper_key(k) in WRAPPER_KEYS:
+                    raw_args = data[k]
+                    break
+
+            if raw_args is None:
+                reserved = {"action", "tool", "name", "thought"}
+                fallback_args = {k: v for k, v in data.items() if k.lower().strip() not in reserved and clean_wrapper_key(k) not in WRAPPER_KEYS}
+                raw_args = fallback_args if fallback_args else {}
+
+            normalized_args = normalize_tool_args(tool_name.strip(), raw_args)
+            return "tool", {"tool": tool_name.strip(), "args": normalized_args}
 
         raise ValueError(f"Unrecognized action '{action}'. Must be 'tool' or 'final'.")
 
@@ -253,6 +471,16 @@ Schema B (When you have enough information to answer the user):
     if getattr(settings, "PROMPT_VARIANT", "hardened").lower() != "baseline":
         prompt += """8. For ANY question asking about database records, students, departments, marks, or tables, if the `read_sql` tool is available to you, you MUST invoke `read_sql` first using Schema A. Do NOT write hypothetical SQL queries in the final answer without executing them.
 9. For ANY factual question about documents, specifications, architecture, system parameters, or deployment, if the `search_documents` tool is available to you, you MUST invoke `search_documents` first using Schema A.
+"""
+    has_sql = any(t["name"] == "read_sql" for t in allowed_tools_info)
+    if has_sql:
+        from backend.tools import get_demo_db_schema
+        schema_info = get_demo_db_schema()
+        prompt += f"""
+### DEMO DATABASE SCHEMA (SQLite):
+The demo database is SQLite. Do NOT query MySQL information_schema or execute SHOW TABLES.
+Only run valid SQLite SELECT queries against the following actual tables and columns:
+{schema_info}
 """
     return prompt
 
@@ -369,8 +597,13 @@ class AgentRunner:
         ]
 
         sources_used = []
+        had_tool_error = any(st.step_type == "tool" and "Tool Execution Error" in (st.output_data or "") for st in existing_steps)
+        had_retry = any(st.step_type == "retry" for st in existing_steps)
 
-        # Replay completed steps into messages
+        prior_latency = run.total_latency_ms or 0.0
+        failed_call_signatures = set()
+
+        # Replay completed steps into messages and detect previous tool failures
         for st in existing_steps:
             if st.step_type == "llm":
                 messages.append({"role": "assistant", "content": st.output_data})
@@ -378,8 +611,13 @@ class AgentRunner:
                 messages.append(
                     {"role": "user", "content": f"Tool Observation ({st.input_data}):\n{st.output_data}"}
                 )
-                if "Source:" in st.output_data or "search_documents" in st.input_data:
+                if ("Source:" in (st.output_data or "") or "search_documents" in (st.input_data or "")) and not (st.output_data or "").startswith("Tool Execution Error"):
                     sources_used.append(st.output_data)
+                if "Error" in (st.output_data or ""):
+                    failed_call_signatures.add(st.input_data)
+            elif st.step_type == "policy":
+                if "denied" in (st.output_data or "").lower() or "blocked" in (st.output_data or "").lower():
+                    failed_call_signatures.add(st.input_data)
 
         # Check if there was an approval recently decided that needs execution
         pending_approval = (
@@ -402,6 +640,10 @@ class AgentRunner:
                     tool_output = str(tool.func(**tool_args))
                 except Exception as e:
                     tool_output = f"Tool execution failed: {str(e)}"
+                    failed_call_signatures.add((tool_name, json.dumps(tool_args, sort_keys=True)))
+
+                if "Error" in tool_output:
+                    failed_call_signatures.add((tool_name, json.dumps(tool_args, sort_keys=True)))
 
                 t_lat = (time.time() - t_start) * 1000
                 record_step(
@@ -422,13 +664,20 @@ class AgentRunner:
 
             elif pending_approval.status == "denied":
                 step_counter += 1
+                tool_name = pending_approval.tool_name
+                try:
+                    denied_args = json.loads(pending_approval.tool_args)
+                    failed_call_signatures.add((tool_name, json.dumps(denied_args, sort_keys=True)))
+                except Exception:
+                    pass
+
                 record_step(
                     db=db,
                     run_id=run_id,
                     step_number=step_counter,
                     step_type="policy",
                     input_data=f"Denied approval for {pending_approval.tool_name}",
-                    output_data="Human supervisor denied this high-risk action.",
+                    output_data="Tool execution was denied by human supervisor.",
                     latency_ms=0.0,
                 )
                 messages.append({
@@ -504,6 +753,7 @@ class AgentRunner:
                 parse_error = str(e)
 
             while parse_error and retry_count < max_retries:
+                had_retry = True
                 retry_count += 1
                 step_counter += 1
                 retry_start = time.time()
@@ -588,28 +838,50 @@ class AgentRunner:
                             })
                             continue
 
-                run.status = "completed"
+                # Post-eval fix: if an approval in this run was denied by a supervisor, set status to 'denied'
+                has_denied = (
+                    db.query(Approval)
+                    .filter(Approval.run_id == run_id, Approval.status == "denied")
+                    .first()
+                    is not None
+                )
+                run.status = "denied" if has_denied else "completed"
                 run.final_answer = final_answer
-                run.total_latency_ms = (time.time() - start_time) * 1000
+                run.total_latency_ms = prior_latency + ((time.time() - start_time) * 1000)
                 db.commit()
                 return {
-                    "status": "completed",
+                    "status": run.status,
                     "answer": final_answer,
                     "sources": sources_used,
                     "run_id": run.id,
+                    "recovered_tool_error": had_tool_error or had_retry,
                 }
 
             # Step 4: Handle Tool Action
             elif action_type == "tool":
                 tool_name = action_data["tool"]
-                tool_args = action_data["args"]
+                tool_args = normalize_tool_args(tool_name, action_data.get("args", {}))
 
-                # Guard against repeated identical tool calls causing loop thrashing
                 current_call_signature = (tool_name, json.dumps(tool_args, sort_keys=True))
-                if getattr(run, "_last_tool_call", None) == current_call_signature:
+                sig_str = f"{tool_name}({json.dumps(tool_args)})"
+                is_failed_repeat = (current_call_signature in failed_call_signatures) or (sig_str in failed_call_signatures)
+                is_immediate_repeat = getattr(run, "_last_tool_call", None) == current_call_signature
+
+                # Guard against repeated identical tool calls causing loop thrashing or re-triggering approvals
+                if is_failed_repeat or is_immediate_repeat:
+                    step_counter += 1
+                    record_step(
+                        db=db,
+                        run_id=run_id,
+                        step_number=step_counter,
+                        step_type="policy",
+                        input_data=f"Blocked duplicate tool call: {tool_name}",
+                        output_data=f"Tool '{tool_name}' with identical arguments already failed, was denied, or was executed. Repeated invocation blocked.",
+                        latency_ms=0.0,
+                    )
                     messages.append({
                         "role": "user",
-                        "content": f"Loop Warning: Tool '{tool_name}' was just executed with identical arguments. Do not repeat the same call. Formulate your final answer using the observation already gathered.",
+                        "content": f"Loop Warning: Tool '{tool_name}' with arguments {json.dumps(tool_args)} has already been attempted in this run. Do not repeat the identical call. Formulate your final answer using available information or choose a different action.",
                     })
                     continue
                 run._last_tool_call = current_call_signature
@@ -640,7 +912,7 @@ class AgentRunner:
 
                 if decision == PolicyDecision.REQUIRES_APPROVAL:
                     run.status = "paused_for_approval"
-                    run.total_latency_ms = (time.time() - start_time) * 1000
+                    run.total_latency_ms = prior_latency + ((time.time() - start_time) * 1000)
                     db.commit()
                     return {
                         "status": "paused_for_approval",
@@ -652,6 +924,8 @@ class AgentRunner:
                     }
 
                 elif decision == PolicyDecision.DENIED:
+                    failed_call_signatures.add(current_call_signature)
+                    failed_call_signatures.add(sig_str)
                     # Inform agent of policy denial so it can adapt or answer
                     messages.append({
                         "role": "user",
@@ -664,10 +938,18 @@ class AgentRunner:
                     step_counter += 1
                     t_exec_start = time.time()
                     tool_obj = tool_registry.get(tool_name)
+                    tool_args = normalize_tool_args(tool_name, tool_args)
                     try:
                         tool_result = str(tool_obj.func(**tool_args))
                     except Exception as e:
                         tool_result = f"Tool Execution Error: {str(e)}"
+                        had_tool_error = True
+                        failed_call_signatures.add(current_call_signature)
+                        failed_call_signatures.add(sig_str)
+
+                    if "Error" in tool_result:
+                        failed_call_signatures.add(current_call_signature)
+                        failed_call_signatures.add(sig_str)
 
                     t_exec_lat = (time.time() - t_exec_start) * 1000
                     record_step(
@@ -680,7 +962,7 @@ class AgentRunner:
                         latency_ms=t_exec_lat,
                     )
 
-                    if "Source:" in tool_result or tool_name == "search_documents":
+                    if ("Source:" in tool_result or tool_name == "search_documents") and not tool_result.startswith("Tool Execution Error"):
                         sources_used.append(tool_result)
 
                     messages.append({
@@ -690,17 +972,24 @@ class AgentRunner:
                     continue
 
         # If max iterations exhausted
-        run.status = "completed"
+        has_denied = (
+            db.query(Approval)
+            .filter(Approval.run_id == run_id, Approval.status == "denied")
+            .first()
+            is not None
+        )
+        run.status = "denied" if has_denied else "completed"
         fallback_msg = (
             "Maximum reasoning iterations reached. Partial context gathered. "
             "Please review the trace steps for detailed observations."
         )
         run.final_answer = fallback_msg
-        run.total_latency_ms = (time.time() - start_time) * 1000
+        run.total_latency_ms = prior_latency + ((time.time() - start_time) * 1000)
         db.commit()
         return {
-            "status": "completed",
+            "status": run.status,
             "answer": fallback_msg,
             "sources": sources_used,
             "run_id": run.id,
+            "recovered_tool_error": had_tool_error or had_retry,
         }

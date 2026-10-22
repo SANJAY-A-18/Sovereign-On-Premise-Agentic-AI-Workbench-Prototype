@@ -119,3 +119,36 @@ Sensitive data is masked before logging or trace persistence (`backend/policy.py
 1. **Host Ollama Concurrency:** Native Ollama on an 8 GB laptop runs models serially in RAM/VRAM. When multiple concurrent requests hit the model simultaneously, requests queue in Ollama; sustained back-to-back heavy prompts can cause temporary timeouts (as observed during prompt #12 in high-load testing).
 2. **Browser Driver Environment:** Native Playwright binaries cannot be downloaded dynamically in strict air-gapped environments without pre-bundled browser caches. The web UI is verified via `streamlit.testing.v1.AppTest`.
 3. **Complex Multi-Step Tool Chaining:** On 3B parameter models, multi-step tasks requiring more than 2 sequential tool invocations (e.g. database query -> calculation -> document search) can occasionally stop early with a partial summary. Future evaluation should assess prompting enhancements or fine-tuned system instructions.
+
+---
+
+## 7. Post-Evaluation Architecture Decisions & Robustness Hardening
+
+### 7.1 Shared Institutional Knowledge Base vs. Object-Level Isolation
+A fundamental design consideration during post-evaluation was whether uploaded documents should be completely private to individual users or shared across the institution:
+- **Intended Design (Shared Knowledge Base):** In an enterprise or university deployment, uploaded policies, regulations, and handbooks constitute shared institutional knowledge. All authorized AI agents (e.g. Document Assistant) and authenticated users query the collective vector repository to provide accurate institutional grounding.
+- **Strict Object-Level Authorization:** To protect data integrity without sacrificing shared retrieval:
+  1. **Document Modification & Deletion:** Enforced via `DELETE /documents/{id}` and UI permission checks: regular users can only delete documents they personally uploaded (`document.uploaded_by == current_user.id`); administrators can delete any document. Other users see read-only badges (`🔒 Shared`).
+  2. **Run & Execution Trace Isolation:** Users can only query their own runs (`GET /runs` strictly filters `user_id == current_user.id`) and traces (`GET /runs/{id}` returns HTTP 403 Forbidden for other users' traces).
+  3. **Human Approval Scoping:** Only run owners or administrators can inspect pending approvals or decide high-risk tool execution (`GET /approvals/pending` and `POST /approvals/{id}/decide`).
+  4. **Security Audit Log Isolation:** Audit trails containing sensitive compliance logs (`GET /audit`) are strictly restricted to the `admin` role (HTTP 403 for regular users).
+- **Verification:** Tested in `tests/test_stage3_security.py::test_object_level_authorization` and `tests/test_ui_comprehensive.py::test_ui_documents_shared_kb_and_authorization`.
+
+### 7.2 Pre-Approval Static SQL Validation
+Before creating a human-in-the-loop approval request for `read_sql`:
+1. The backend runs static AST/keyword checks (single statement, SELECT only, no comment bypasses).
+2. It executes an `EXPLAIN <query>` statement using a read-only SQLite connection against `demo.db`.
+3. If the query references non-existent tables or columns, or contains invalid syntax, the policy engine rejects the query with `PolicyDecision.DENIED` and immediately returns the error along with the active SQLite schema (`students (id, name, department, marks, gpa, graduation_year)`) to the agent without requiring human supervisor intervention.
+
+### 7.3 Duplicate Tool Loop Prevention
+To eliminate infinite retry loops on local models:
+- The agent loop tracks call signatures `(tool_name, frozenset(args))`.
+- If an agent attempts an identical tool call that previously failed or was denied, execution is intercepted, a policy step is logged, and the loop forces the model to synthesize a final answer or explain the limitation to the user.
+
+### 7.4 Clean-State Reset Lifecycle (`scripts/reset_dev_state.py`)
+Provides automated, deterministic developer state reset:
+- Fails safe if servers are active on ports 8000/8501 (unless `--force`).
+- Creates timestamped backups (`data_backup_YYYYMMDD_HHMMSS/`) ignored by Git.
+- Purges `sovereign.db`, WAL/SHM, Chroma vectors, uploads, and logs.
+- Re-seeds `demo.db` with canonical 10-student records, asserting row counts and benchmark ground truth answers.
+

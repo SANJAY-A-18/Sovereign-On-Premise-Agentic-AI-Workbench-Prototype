@@ -26,6 +26,7 @@ The two canonical runs are presented as the primary result. The pooled n=90 inte
 | Factorial: `json_on_retry_off` | *not run* | 0 | 0 | N/A | N/A | N/A | N/A | N/A | N/A |
 | Factorial: `json_off_retry_on` | Completed | 45 | 1 | **93.3%** | [82.1%, 97.7%] | **82.2%** | [68.7%, 90.7%] | 23.53s | 2344.1 MB |
 | Factorial: `json_off_retry_off` | Completed | 45 | 1 | **88.9%** | [76.5%, 95.2%] | **66.7%** | [52.1%, 78.6%] | 19.25s | 2363.0 MB |
+| Post-Fix Canonical (`fixes` branch) | Completed | 45 | 1 | **100.0%** | [92.1%, 100.0%] | **86.7%** | [73.8%, 93.7%] | 22.61s | 2508.0 MB |
 
 *\*Note on Pooled n=90 Interval and Latency:* The pooled n=90 confidence interval is approximate because the same 45 items are repeated across runs (clustered observations, not statistically independent). Pooled latency is omitted to avoid conflating repeated measures across varying host conditions.
 
@@ -39,6 +40,8 @@ The two canonical runs are presented as the primary result. The pooled n=90 inte
 | `Canonical Run 1 vs json_off_retry_on` | 45 | 35 | 7 | 2 | 1 | 3 | **1.00000** | Not significant (p = 1.00000) |
 | `Canonical Run 1 vs Canonical Run 2` | 45 | 33 | 6 | 3 | 3 | 6 | **1.00000** | Not significant (p = 1.00000) |
 | `Canonical Run 1 vs Post-Hoc Variant` | 45 | 34 | 3 | 6 | 2 | 8 | **0.28906** | Not significant (p = 0.28906) |
+| `Canonical Run 1 vs Post-Fix Canonical` | 45 | 32 | 2 | 7 | 4 | 11 | **0.54883** | Not significant (p = 0.54883) |
+| `Canonical Run 2 vs Post-Fix Canonical` | 45 | 33 | 3 | 6 | 3 | 9 | **0.50781** | Not significant (p = 0.50781) |
 
 ### Item-Level Flip Table: Canonical Run 1 vs Run 2
 Across identical 45 items, exactly **6 items flipped** (Run 1 Pass -> Run 2 Fail: 3; Run 1 Fail -> Run 2 Pass: 3; McNemar p = 1.00000):
@@ -62,6 +65,7 @@ Across identical 45 items, exactly **6 items flipped** (Run 1 Pass -> Run 2 Fail
 | Factorial: `json_off_retry_off` | 45 | **15** | 7 | 3 | 0 | 5 | 0 | 0 |
 | Baseline Prompt (Rules 8 & 9 omitted) | 45 | **20** | 15 | 4 | 1 | 0 | 0 | 0 |
 | Post-Hoc (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`) | 45 | **5** | 1 | 4 | 0 | 0 | 0 | 0 |
+| Post-Fix Canonical (`fixes` branch) | 45 | **6** | 3 | 3 | 0 | 0 | 0 | 0 |
 
 ### Diagnostic Analysis: Engine Errors (`rag_q07` Baseline, `rag_q30` Run 2)
 In `e3_prompt_baseline.jsonl`, item `rag_q07` records `valid_response=False` with `retries=0`. Similarly, in Canonical Run 2 (`e2_json_on_retry_on_rerun.jsonl`), decoy item `rag_q30` records `valid_response=False` with `retries=0`.
@@ -86,9 +90,16 @@ Consequently, zero retries were attempted, resulting in `valid_response=False` a
 | Factorial: `json_off_retry_off` | 45 | **19.25s** | 20.81s | 10.46s | 10.59s | 27.33s |
 | Baseline Prompt (Rules 8 & 9 omitted) | 45 | **16.17s** | 17.82s | 10.22s | 13.73s | 14.69s |
 | Post-Hoc (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`) | 45 | **40.06s** | 45.79s | 16.44s | 24.02s | 45.33s |
+| Post-Fix Canonical (`fixes` branch) | 45 | **22.61s** | 26.24s | 10.5s | 14.93s | 20.61s |
 
 > **Important Methodology Note on Latency Comparability:**
 > Overall aggregate latency means across configurations are **not directly comparable** because abstentions end early. When an agent prematurely abstains without issuing a tool call (such as the 15 premature abstentions in `e3_prompt_baseline`, 6 in Canonical Run 1, and 7 in `json_off_retry_off`), it generates a short negative sentence on Turn 1 in ~10–12 seconds without performing vector searches or database queries. Conversely, configurations that successfully invoke tools perform multi-turn reasoning and retrieval loops lasting 25–70+ seconds. Aggregate mean latencies thus confound execution efficiency with failure-mode dropouts (a configuration with more early-exit failures appears misleadingly 'faster'). Meaningful latency evaluations must be compared per task type and conditioned on multi-turn tool execution.
+
+## Post-Fix Canonical Run (`fixes` Branch)
+*Evaluated on `fixes` branch with argument normalization and boundary-preserving chunker (`eval/results/postfix_canonical.jsonl`).*
+| Configuration | Status | n | Valid Response | 95% CI | Task Success | 95% CI | Mean Latency | Peak Ollama RSS |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `POST-FIX: postfix_canonical` | Completed | 45 | **100.0%** | [92.1%, 100.0%] | **86.7%** | [73.8%, 93.7%] | 22.61s | 2508.0 MB |
 
 ## Post-Hoc Architectural Variant: REQUIRE_RETRIEVAL_BEFORE_ABSTAIN
 *Evaluated as a post-hoc intervention forcing one retrieval before accepting Document Assistant abstentions.*

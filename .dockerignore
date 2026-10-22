@@ -1,0 +1,39 @@
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Persistent and local runtime data
+data/
+*.db
+*.sqlite3
+
+# Evaluation scratch and workdirs
+eval/.workdir/
+eval/workdir/
+
+# Backup directories and review folders
+backups/
+_to_review/
+
+# Version control
+.git/
+.gitignore
+
+# Python test caches and compiled artifacts
+.pytest_cache/
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+*.py[cod]
+*$py.class
+
+# Secrets and local environment files
+.env
+.env.local
+
+# IDE and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
