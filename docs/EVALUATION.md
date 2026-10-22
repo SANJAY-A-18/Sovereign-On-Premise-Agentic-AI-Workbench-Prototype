@@ -561,8 +561,8 @@ As hardware budgets permit (e.g., workstations with 16 GB+ RAM or dedicated VRAM
      - `Document Assistant`: **152 out of 242 runs (62.81%)** encountered the keyword error.
      - `Data Analyst`: **0 out of 31 runs (0.00%)** encountered the keyword error.
    - **Latency Impact:**
-     - Overall affected runs had a mean total latency of **33.90 s** (33,903.60 ms) vs **19.73 s** (19,732.99 ms) for unaffected runs (+71.8% latency inflation due to tool execution failure and subsequent retry prompt cycle).
-     - For `Document Assistant` specifically, affected runs averaged **33.90 s** vs **24.29 s** for unaffected runs.
+     - Within `Document Assistant` runs specifically, affected runs averaged **33.90 s** (33,903.60 ms) vs **24.29 s** (24,291.68 ms) for unaffected runs (a difference of about **+9.6 s**). The cause of this latency difference is not established (e.g., whether attributable to retry prompt overhead, token generation length, or host load variation).
+     - Across all benchmark suites combined, affected runs averaged **33.90 s** vs **19.73 s** for unaffected runs (which included faster Data Analyst runs averaging 6.50 s).
      - For `Data Analyst`, all 31 runs were unaffected, averaging **6.50 s**.
    - **Trace-Matched Failure Reclassification:**
      Every failed item ($n = 66$) across the benchmark suites in `eval/results/*.jsonl` was matched 1-to-1 with its execution trace in `eval/.workdir/sovereign.db` by question text and chronological execution sequence:
