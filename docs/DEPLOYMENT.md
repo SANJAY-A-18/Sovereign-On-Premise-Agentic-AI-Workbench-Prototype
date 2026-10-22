@@ -111,12 +111,15 @@ This deployment path enables running the Sovereign Workbench on another laptop (
 
 ### Prerequisites
 - **Docker Desktop** (with WSL2 backend on Windows, or Docker Engine on Linux/macOS) installed and running.
-- **8 GB RAM minimum** (with WSL2 memory capped to 2 GB if running on Windows; see `.wslconfig` recommendations in Section 5).
+- **Docker Desktop memory allocation**: Configure Docker Desktop memory to **at least 4 GB** (**6 GB or more** on 16 GB laptops), because the containerized Ollama engine requires about 2.3 GB during active model inference.
 - **About 6 GB free disk space**:
   - Container images (`sovereign-backend`, `sovereign-ui`, and `ollama/ollama`): ~1.8 GB combined.
   - Model weights: `qwen2.5:3b` (~2.0 GB) and `nomic-embed-text` (~274 MB).
   - SQLite database and Chroma vector store scratch space: ~1.5 GB.
 - **Internet connection for the first model pull**: An active internet connection is required solely on the first launch so that Docker Hub images and Ollama models can be pulled. Subsequent runs operate 100% offline with zero external network connectivity.
+
+> [!NOTE]
+> **Native Ollama Port Conflict:** Quit native Ollama on that laptop first (from the system tray or by terminating the `ollama` process), or host port `11434` will clash with the containerized Ollama service.
 
 ### Exact Steps
 
