@@ -116,15 +116,16 @@ def test_m3_upload_document_filename_sanitization(auth_client):
     assert "Invalid or hidden filename" in res_hidden.json()["detail"] or "Unsupported" in res_hidden.json()["detail"]
 
     # URL encoded traversal
-    res_traversal = client.post(
-        "/documents/upload",
-        files={"file": ("%2e%2e%2ftest_traversal.txt", io.BytesIO(b"content"), "text/plain")},
-    )
-    # Either successfully stripped to safe basename or rejected
-    if res_traversal.status_code == 200:
-        assert res_traversal.json()["filename"] == "test_traversal.txt"
-    else:
-        assert res_traversal.status_code == 400
+    with patch("backend.main.vector_store.add_document", return_value=1):
+        res_traversal = client.post(
+            "/documents/upload",
+            files={"file": ("%2e%2e%2ftest_traversal.txt", io.BytesIO(b"content"), "text/plain")},
+        )
+        # Either successfully stripped to safe basename or rejected
+        if res_traversal.status_code == 200:
+            assert res_traversal.json()["filename"] == "test_traversal.txt"
+        else:
+            assert res_traversal.status_code == 400
 
 
 def test_m1_reset_db_engine_reattaches_wal(tmp_path):
