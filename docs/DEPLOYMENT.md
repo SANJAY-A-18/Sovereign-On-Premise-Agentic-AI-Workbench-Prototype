@@ -1,6 +1,6 @@
 # Sovereign On-Premise Agentic AI Workbench: Deployment Guide
 
-This document describes the one-command deployment workflow, air-gapped offline transfer procedure, memory resource benchmarks, and 8 GB RAM optimization guidelines for the **Sovereign On-Premise Agentic AI Workbench**.
+This document describes the Docker Hub one-command deployment workflow, native quickstart, air-gapped offline transfer procedure, memory resource benchmarks, and 8 GB RAM optimization guidelines for the **Sovereign On-Premise Agentic AI Workbench**.
 
 ---
 
@@ -105,7 +105,115 @@ Or via PowerShell wrapper:
 
 ---
 
-## 3. Offline & Air-Gapped Deployment Procedure
+## 3. Run from Docker Hub on another laptop
+
+This deployment path enables running the Sovereign Workbench on another laptop (Windows, macOS, or Linux) with Docker Desktop installed—without needing to install Python, clone the full git repository, or manually install and manage Ollama on the host machine.
+
+### Prerequisites
+- **Docker Desktop** (with WSL2 backend on Windows, or Docker Engine on Linux/macOS) installed and running.
+- **8 GB RAM minimum** (with WSL2 memory capped to 2 GB if running on Windows; see `.wslconfig` recommendations in Section 5).
+- **About 6 GB free disk space**:
+  - Container images (`sovereign-backend`, `sovereign-ui`, and `ollama/ollama`): ~1.8 GB combined.
+  - Model weights: `qwen2.5:3b` (~2.0 GB) and `nomic-embed-text` (~274 MB).
+  - SQLite database and Chroma vector store scratch space: ~1.5 GB.
+- **Internet connection for the first model pull**: An active internet connection is required solely on the first launch so that Docker Hub images and Ollama models can be pulled. Subsequent runs operate 100% offline with zero external network connectivity.
+
+### Exact Steps
+
+#### Step 1: Download Deployment Manifests
+On the target laptop, create a project directory and download `docker-compose.hub.yml` and `.env.example`:
+```bash
+mkdir sovereign-workbench && cd sovereign-workbench
+
+# Download compose file and sample environment configuration
+curl -fsSL -o docker-compose.hub.yml https://raw.githubusercontent.com/<YOUR_REPO>/main/docker-compose.hub.yml
+curl -fsSL -o .env.example https://raw.githubusercontent.com/<YOUR_REPO>/main/.env.example
+```
+*(Alternatively, copy `docker-compose.hub.yml` and `.env.example` directly via USB drive or network share).*
+
+#### Step 2: Configure Environment (.env)
+Copy `.env.example` to `.env`:
+```bash
+# Linux / macOS / PowerShell
+cp .env.example .env
+
+# Windows Command Prompt
+copy .env.example .env
+```
+Open `.env` in a text editor and set:
+1. `DOCKERHUB_USERNAME`: Set to the Docker Hub account or organization where the images are published.
+2. `JWT_SECRET_KEY`: Set to a cryptographically secure 256-bit secret string (e.g., generated with `python -c "import secrets; print(secrets.token_hex(32))"` or any 64-character hex string).
+
+> [!IMPORTANT]
+> `JWT_SECRET_KEY` is strictly required from `.env`. The Compose specification uses `${JWT_SECRET_KEY:?...}` and provides no default; Docker Compose will refuse to start if this variable is unset or empty.
+
+Example `.env` snippet:
+```ini
+DOCKERHUB_USERNAME=your_dockerhub_username
+TAG=latest
+JWT_SECRET_KEY=4a2f8b9e1c3d5a7f6e0b8d2c4e6a8f0b1c3d5e7a9b0c2d4e6f8a0b2c4d6e8f0a
+```
+
+#### Step 3: Launch Stack with One Command
+Execute Docker Compose to pull the pre-built images and start the services:
+```bash
+docker compose -f docker-compose.hub.yml up -d
+```
+
+#### Step 4: Wait for Models
+The bundled one-shot service `ollama-init` will automatically detect when the containerized Ollama engine is healthy and run:
+- `ollama pull qwen2.5:3b`
+- `ollama pull nomic-embed-text`
+
+You can monitor model pull progress in real time:
+```bash
+docker compose -f docker-compose.hub.yml logs -f ollama-init
+```
+When downloads complete, `ollama-init` exits with status `0`. The FastAPI backend will finish its health checks and begin accepting requests.
+
+#### Step 5: Open Web Interface
+Open your web browser and navigate to:
+- **Streamlit Web UI**: [http://127.0.0.1:8501](http://127.0.0.1:8501)
+- **FastAPI Documentation**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- **Backend Health Check**: [http://127.0.0.1:8000/live](http://127.0.0.1:8000/live)
+
+---
+
+### How to Stop and How to Reset
+
+#### Stopping the Stack
+- **Pause execution without losing data or models**:
+  ```bash
+  docker compose -f docker-compose.hub.yml stop
+  ```
+- **Stop and remove containers (preserving data volumes)**:
+  ```bash
+  docker compose -f docker-compose.hub.yml down
+  ```
+  Both named volumes (`sovereign_data` and `sovereign_ollama_data`) remain intact on disk.
+
+#### Resetting the Stack
+- **Reset application data only (preserve downloaded model weights)**:
+  To wipe SQLite databases, uploaded files, and vector indices while avoiding re-downloading model weights:
+  ```bash
+  docker compose -f docker-compose.hub.yml down
+  docker volume rm sovereign_data
+  docker compose -f docker-compose.hub.yml up -d
+  ```
+- **Complete factory reset (wipe application data AND downloaded model weights)**:
+  ```bash
+  docker compose -f docker-compose.hub.yml down -v
+  ```
+
+---
+
+### Honest Operational Limits
+- **CPU-Only Inference Latency**: On a standard laptop without dedicated GPU acceleration, CPU-only local LLM inference is relatively slow. Generating complete agent answers with `qwen2.5:3b` takes approximately **20 to 60 seconds per answer** (depending on context length, chain-of-thought tokens, and agent tool execution turns).
+- **Verification in CI Only Unless Proven**: As documented in Section 5, Docker Desktop and WSL2 were not installed on the primary development laptop. Dockerfiles, multi-architecture compilation (`linux/amd64` and `linux/arm64`), and compose orchestration are verified via automated GitHub Actions CI workflows ([.github/workflows/docker-ci.yml](file:///c:/Users/SanjayAnandhakumar/Desktop/FYP/.github/workflows/docker-ci.yml) and [.github/workflows/docker-publish.yml](file:///c:/Users/SanjayAnandhakumar/Desktop/FYP/.github/workflows/docker-publish.yml)) rather than proven locally on this machine.
+
+---
+
+## 4. Offline & Air-Gapped Deployment Procedure
 
 The entire application runtime requires **zero outbound internet connectivity**. Once container images are built, the system can run indefinitely in an air-gapped facility with Wi-Fi and Ethernet completely disconnected.
 
@@ -145,7 +253,7 @@ python scripts/demo_check.py --password "AirGappedAdmin123!"
 
 ---
 
-## 4. Empirical Memory Measurements (8 GB Laptop Audit)
+## 5. Empirical Memory Measurements (8 GB Laptop Audit)
 
 All measurements below were obtained on the test machine running genuine Windows 11 with 7.69 GB usable RAM and an Intel 13th Gen CPU with no dedicated GPU.
 
@@ -209,7 +317,7 @@ wsl --shutdown
 
 ---
 
-## 5. Security & Isolation Verification
+## 6. Security & Isolation Verification
 
 | Security Control | Implementation | Verification Method |
 |---|---|---|
@@ -222,7 +330,7 @@ wsl --shutdown
 
 ---
 
-## 6. Maintenance & Clean-State Reset Procedure
+## 7. Maintenance & Clean-State Reset Procedure
 
 When re-testing or resetting the development environment to a known baseline:
 
