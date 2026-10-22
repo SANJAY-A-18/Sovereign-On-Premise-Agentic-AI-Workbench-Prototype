@@ -329,6 +329,8 @@ def generate_summary_csv(
             exp_prefix = exp_tag.split("_")[0].upper()
             if exp_tag.startswith("posthoc"):
                 exp_prefix = "POSTHOC"
+            elif exp_tag.startswith("postfix"):
+                exp_prefix = "POSTFIX"
 
             # E1 runs are retrieval-only; peak RSS is N/A
             peak_rss_val = (
@@ -767,6 +769,15 @@ def main():
         all_summaries["posthoc_retrieval_before_abstain"] = posthoc_summary
         all_raw_items["posthoc_retrieval_before_abstain"] = items_posthoc
 
+    # 6. Load Post-Fix Canonical results
+    postfix_fpath = RESULTS_DIR / "postfix_canonical.jsonl"
+    meta_postfix, items_postfix = load_jsonl_results(postfix_fpath)
+    postfix_summary = None
+    if items_postfix:
+        postfix_summary = calculate_metrics_summary(items_postfix, meta_postfix)
+        all_summaries["postfix_canonical"] = postfix_summary
+        all_raw_items["postfix_canonical"] = items_postfix
+
     # Also check smoke test
     smoke_fpath = RESULTS_DIR / "smoke_test.jsonl"
     meta_smoke, items_smoke = load_jsonl_results(smoke_fpath)
@@ -883,6 +894,7 @@ def main():
         ("Factorial: `json_on_retry_off`", "e2_json_on_retry_off", False),
         ("Factorial: `json_off_retry_on`", "e2_json_off_retry_on", False),
         ("Factorial: `json_off_retry_off`", "e2_json_off_retry_off", False),
+        ("Post-Fix Canonical (`fixes` branch)", "postfix_canonical", False),
     ]
 
     for label, tag, is_pooled in e2_table_rows:
@@ -917,6 +929,9 @@ def main():
     ]
     if posthoc_summary and items_posthoc:
         mcnemar_pairs.append(("Canonical Run 1 vs Post-Hoc Variant", items_r1, items_posthoc, "Post-Hoc Intervention"))
+    if postfix_summary and items_postfix:
+        mcnemar_pairs.append(("Canonical Run 1 vs Post-Fix Canonical", items_r1, items_postfix, "Post-Fix Intervention"))
+        mcnemar_pairs.append(("Canonical Run 2 vs Post-Fix Canonical", items_r2, items_postfix, "Post-Fix Intervention"))
 
     for comp_name, list_a, list_b, effect_name in mcnemar_pairs:
         if list_a and list_b:
@@ -989,6 +1004,7 @@ def main():
         ("Factorial: `json_off_retry_off`", "e2_json_off_retry_off"),
         ("Baseline Prompt (Rules 8 & 9 omitted)", "e3_prompt_baseline"),
         ("Post-Hoc (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`)", "posthoc_retrieval_before_abstain"),
+        ("Post-Fix Canonical (`fixes` branch)", "postfix_canonical"),
     ]
 
     for label, tag in all_failure_runs:
@@ -1044,6 +1060,7 @@ def main():
         ("Factorial: `json_off_retry_off`", "e2_json_off_retry_off"),
         ("Baseline Prompt (Rules 8 & 9 omitted)", "e3_prompt_baseline"),
         ("Post-Hoc (`REQUIRE_RETRIEVAL_BEFORE_ABSTAIN`)", "posthoc_retrieval_before_abstain"),
+        ("Post-Fix Canonical (`fixes` branch)", "postfix_canonical"),
     ]
 
     for label, tag in latency_runs_to_show:
@@ -1069,6 +1086,19 @@ def main():
         "failure-mode dropouts (a configuration with more early-exit failures appears misleadingly 'faster'). "
         "Meaningful latency evaluations must be compared per task type and conditioned on multi-turn tool execution."
     )
+
+    # Post-Fix Section
+    if postfix_summary and postfix_summary.get("status") == "completed":
+        md_lines.append("")
+        md_lines.append("## Post-Fix Canonical Run (`fixes` Branch)")
+        md_lines.append("*Evaluated on `fixes` branch with argument normalization and boundary-preserving chunker (`eval/results/postfix_canonical.jsonl`).*")
+        md_lines.append("| Configuration | Status | n | Valid Response | 95% CI | Task Success | 95% CI | Mean Latency | Peak Ollama RSS |")
+        md_lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+        pf_v_ci = postfix_summary.get("valid_response_ci", (0, 0))
+        pf_s_ci = postfix_summary.get("task_success_ci", (0, 0))
+        md_lines.append(
+            f"| `POST-FIX: postfix_canonical` | Completed | {postfix_summary['n']} | **{postfix_summary['valid_response_rate']*100:.1f}%** | [{pf_v_ci[0]*100:.1f}%, {pf_v_ci[1]*100:.1f}%] | **{postfix_summary['task_success_rate']*100:.1f}%** | [{pf_s_ci[0]*100:.1f}%, {pf_s_ci[1]*100:.1f}%] | {postfix_summary['mean_latency_s']}s | {postfix_summary['peak_ollama_rss_mb']} MB |"
+        )
 
     # Post-Hoc Variant Section
     if posthoc_summary and posthoc_summary.get("status") == "completed":

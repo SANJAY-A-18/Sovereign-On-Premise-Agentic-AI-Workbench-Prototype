@@ -571,3 +571,88 @@ As hardware budgets permit (e.g., workstations with 16 GB+ RAM or dedicated VRAM
      - **No tool call at all:** **12 runs (18.18%)** — The LLM failed JSON formatting constraints, hit formatting retry exhaustion, or abstained directly without issuing any tool call.
 3. **Post-Evaluation Fixes:** The root causes of the keyword argument error and associated abstentions were resolved in post-eval fixes (Section 11.4: extended argument normalization) on the `fixes` branch.
 
+
+---
+
+## 13. Post-Fix Canonical Benchmark Evaluation (`fixes` Branch)
+
+Following post-evaluation fixes on the `fixes` branch (principally argument normalization supporting trailing colons/nested wrappers in `backend/agent.py` and boundary-preserving chunking in `backend/rag.py`), an end-to-end evaluation benchmark was re-executed under identical headless benchmark conditions against the 45 canonical evaluation items (`eval/results/postfix_canonical.jsonl`).
+
+### 13.1 Performance Summary and Metrics Comparison
+
+| Benchmark Run | Tag / Git Ref | Total Items ($n$) | Valid Response Rate (95% Wilson CI) | Task Success Rate (95% Wilson CI) | Total Latency / Runtime | Mean Latency per Item | Peak Ollama RSS |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Canonical Run 1** | `eval-v1` | 45 | **100.0%** [92.1%, 100.0%] | **80.0%** (36/45) [66.2%, 89.1%] | 1,048.6 s | 23.30 s | 2,126.2 MB |
+| **Canonical Run 2** | `eval-v1` | 45 | **97.8%** [88.4%, 99.6%] | **80.0%** (36/45) [66.2%, 89.1%] | 1,126.3 s | 25.03 s | 2,246.5 MB |
+| **Canonical Pooled** | `eval-v1` | 90 (approx.)* | **98.9%** [94.0%, 99.8%] | **80.0%** (72/90) [70.6%, 86.9%] | N/A (pooled) | N/A | 2,246.5 MB |
+| **Post-Fix Canonical** | `fixes` | 45 | **100.0%** [92.1%, 100.0%] | **86.7%** (39/45) [73.8%, 93.7%] | **1,025 s** (1,024.5 s) | 22.61 s | 2,508.0 MB |
+
+*\*Note: Pooled confidence interval is approximate due to repeated testing of the same 45 items.*
+
+### 13.2 Paired Exact McNemar Tests
+
+Across identical 45 evaluation items, paired contingency analysis reveals:
+
+1. **Post-Fix Canonical vs Canonical Run 1:**
+   - Both Pass: **32**
+   - Both Fail: **2**
+   - $b$ (Run 1 Fail $\to$ Post-Fix Pass): **7 items**
+   - $c$ (Run 1 Pass $\to$ Post-Fix Fail): **4 items**
+   - Total Discordant ($b + c$): **11 items**
+   - **Exact Two-Sided McNemar $p$-value:** **0.54883** (statistically not significant; 95% Wilson CIs overlap).
+
+2. **Post-Fix Canonical vs Canonical Run 2:**
+   - Both Pass: **33**
+   - Both Fail: **3**
+   - $b$ (Run 2 Fail $\to$ Post-Fix Pass): **6 items**
+   - $c$ (Run 2 Pass $\to$ Post-Fix Fail): **3 items**
+   - Total Discordant ($b + c$): **9 items**
+   - **Exact Two-Sided McNemar $p$-value:** **0.50781** (statistically not significant; 95% Wilson CIs overlap).
+
+### 13.3 Trace Inspection & Classification of Failed Items (`eval/.workdir/sovereign.db`)
+
+Across all execution steps in `eval/.workdir/sovereign.db` for the post-fix run (Runs 4–48), the incidence of `Tool Execution Error: search_documents() got an unexpected keyword argument` was exactly **0 steps (0.0%)**, down from 152 steps (55.68%) in `eval-v1`.
+
+Exactly **6 items failed** ($39/45 = 86.7\%$ success). Trace inspection of the database classifies each failure:
+
+1. **`rag_q06` (Run 9) — Abstained after degenerate retrieval:**
+   - **Question:** *"What is the absolute minimum attendance percentage floor below which no condonation is allowed?"*
+   - **Expected:** `['65', 'percent']` (from `attendance_rules.txt`, Clause 2.1).
+   - **Tool Steps:** Step 1: Model emitted malformed wrapper `{"action": "search_documents", "args: {": "query"}`. Normalizer extracted query string `"query"`. Step 3: Tool searched for `"query"` and returned `library_rules.txt` (Chunk #2). Step 4: Model concluded documents did not contain the floor information.
+   - **Actual Answer:** *"The provided documents do not contain the information needed to answer the question about the absolute minimum attendance percentage floor."*
+
+2. **`rag_q09` (Run 12) — Abstained after successful retrieval:**
+   - **Question:** *"What are the exact morning biometric scan window hours at Kiosk-7?"*
+   - **Expected:** `['08:15', '08:35']` (from `attendance_rules.txt`, Section 4).
+   - **Tool Steps:** Step 1: Model searched `"query"` $\to$ `library_rules.txt`. Step 4: Model searched `"morning biometric scan window hours at Kiosk-7"` $\to$ successfully retrieved `attendance_rules.txt` Chunk #5 containing `"The morning logging window opens at 08:15 AM and closes promptly at 08:35 AM at Kiosk-7."` Step 7: Model repeated the identical tool call; Step 8: System policy blocked repeated duplicate invocation. Step 9: Model abstained despite the presence of the exact hours in the context window.
+   - **Actual Answer:** *"The provided documents do not contain the specific information about the morning biometric scan window hours at Kiosk-7."*
+
+3. **`rag_q22` (Run 25) — Retrieved but wrong answer (Reasoning error):**
+   - **Question:** *"A student arrived late for their exam. At what point is hall admission shut down, and what is the earliest time a student is permitted to hand in their paper and exit?"*
+   - **Expected:** `['20', '45']` (from `exam_regulations.txt`, Section 3.2: 20 minutes entry cutoff, 45 minutes earliest exit).
+   - **Tool Steps:** Step 1: Searched question. Step 3: Successfully retrieved `exam_regulations.txt` Chunk #1 (`"...hall entry is strictly barred 20 minutes after the commencement bell rings. No candidate shall be permitted to submit their answer script or leave the hall during the first 45 minutes..."`). Step 4: Model answered 20 minutes for entry, but hallucinated 15 minutes for exit by conflating the arrival window ("15 minutes before") with exit cutoff.
+   - **Actual Answer:** *"Based on the provided documents, hall admission is strictly barred 20 minutes after the commencement bell rings. Therefore, the earliest time a student is permitted to hand in their paper and exit is 15 minutes after the scheduled start time of the exam..."*
+
+4. **`rag_q23` (Run 26) — Retrieved but wrong answer (Lexical keyword mismatch):**
+   - **Question:** *"Can undergraduate students take out rare manuscripts from Wing C, and what special badge is needed for on-site inspection?"*
+   - **Expected:** `['cannot', 'CLRC-SEC-9']` (from `library_rules.txt`, Chunk #2).
+   - **Tool Steps:** Step 1: Searched question. Step 3: Successfully retrieved `library_rules.txt` Chunk #2. Step 4: Model accurately answered the question in natural language using the phrase *"are not allowed to borrow"* instead of the exact modal verb *"cannot"*, failing the automated keyword matching filter.
+   - **Actual Answer:** *"Undergraduate students are not allowed to borrow rare manuscripts from Wing C (2nd Floor) for personal use. They can only be inspected on-site using a special visitor badge, which is CLRC-SEC-9..."*
+
+5. **`rag_q25` (Run 28) — Retrieved but wrong answer (Decoy hallucination):**
+   - **Question:** *"What is the permissible attendance concession for students participating in blood donation drives on campus?"* (Unanswerable decoy).
+   - **Expected:** Honest abstention (e.g., `['do not know', 'not mentioned', 'does not contain']`).
+   - **Tool Steps:** Step 1: Searched query. Step 3: Retrieved `attendance_rules.txt` Chunk #1 (which mentions a 10% duty concession for national sports/symposia). Step 4: Model hallucinated that blood donation drives qualify for the 10% concession.
+   - **Actual Answer:** *"Based on the provided documents, students participating in blood donation drives on campus may receive an official duty allowance of up to 10 percent. However, this allowance is strictly for students representing the institute in recognized national tournaments..."*
+
+6. **`rag_q26` (Run 29) — Retrieved but wrong answer (Decoy hallucination):**
+   - **Question:** *"What is the specific stipend deduction penalty for graduate teaching assistants who fail to meet the 82 percent attendance threshold?"* (Unanswerable decoy).
+   - **Expected:** Honest abstention (e.g., `['do not know', 'not mentioned', 'no information']`).
+   - **Tool Steps:** Step 1: Searched query. Step 3: Retrieved `attendance_rules.txt` Chunk #1 (which mentions an undergraduate condonation surcharge of Rs 2,450). Step 4: Model conflated the undergraduate fine with a graduate TA stipend deduction.
+   - **Actual Answer:** *"The specific stipend deduction penalty for graduate teaching assistants who fail to meet the 82 percent attendance threshold is a condonation surcharge of Rs 2,450 per course. Additionally, these candidates must complete 18 hours of supervised remediation..."*
+
+### 13.4 Methodological Caveats
+
+1. **Sample Size & Variance ($n = 45$):** This post-fix benchmark represents a **single execution run** of $n = 45$ items. Given stochastic generation in small 3B models (even at temperature 0.2), point estimates are subject to sampling variance. The 95% Wilson confidence interval for task success spans **[73.8%, 93.7%]**, overlapping with baseline runs.
+2. **Train/Test Overlap (Non-Held-Out Set):** The post-evaluation fixes (specifically argument unwrapping patterns) were developed after analyzing failure traces observed on this benchmark set under `eval-v1`. This run demonstrates that the specific keyword argument crash and word-splitting chunking bugs were mitigated, but it does **not** constitute an evaluation on a novel, held-out distribution of questions.
+3. **Preservation of Evaluation Tag Integrity:** In accordance with scientific integrity guidelines, **zero baseline evaluation numbers, tables, confidence intervals, or figures** reported in Sections 1 through 10 have been altered or overwritten. All baseline artifacts remain permanently preserved under tag `eval-v1`.
