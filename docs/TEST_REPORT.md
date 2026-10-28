@@ -2,6 +2,10 @@
 
 This report documents the verification of all 39 check items across categories A through K, conducted post-evaluation on the `fixes` branch (baseline tag `eval-v1`). All tests were executed against an isolated temporary data directory (`SOVEREIGN_DATA_DIR` / `DATA_DIR`) ensuring zero modification to `./data/` or `./eval/` artifacts.
 
+> [!NOTE]
+> For the step-by-step manual and automated testing protocol, see [`docs/TEST_SCRIPT.md`](TEST_SCRIPT.md).
+> For the complete plain-language end-user guide and troubleshooting manual, see [`docs/USER_MANUAL.md`](USER_MANUAL.md).
+
 ---
 
 ## 1. Test Execution Summary
