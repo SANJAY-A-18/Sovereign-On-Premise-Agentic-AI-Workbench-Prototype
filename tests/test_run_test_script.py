@@ -34,9 +34,10 @@ def test_runner_offline_execution_pass():
     runner.setup_isolated_environment()
     try:
         runner.run_all_checks()
-        pass_cnt, fail_cnt, skip_cnt = runner.print_summary_table()
+        pass_cnt, limit_cnt, fail_cnt, skip_cnt = runner.print_summary_table()
         assert fail_cnt == 0, f"Expected 0 failures in offline test script run, got {fail_cnt}"
         assert pass_cnt > 20, f"Expected at least 20 passed checks, got {pass_cnt}"
         assert skip_cnt >= 4, f"Expected at least 4 skipped checks (live/manual), got {skip_cnt}"
     finally:
         runner.teardown_environment()
+

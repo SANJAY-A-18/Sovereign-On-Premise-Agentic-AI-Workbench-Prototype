@@ -47,3 +47,4 @@ if ($Verbose) { $ArgsList += "--verbose" }
 
 & $PythonExe $TestScript @ArgsList
 exit $LASTEXITCODE
+
