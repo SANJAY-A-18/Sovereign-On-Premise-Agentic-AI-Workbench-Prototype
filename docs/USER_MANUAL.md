@@ -123,7 +123,7 @@ The Sovereign Workbench uses Role-Based Access Control (RBAC) to enforce adminis
    - **Logged in as:** `<your_username>`
    - **Role:** `ADMIN` (yellow badge).
 
-[SCREENSHOT: login.png - the Account login tab with username and password input fields and Sign In button]
+![the Account login tab with username and password input fields and Sign In button](screenshots/login.png)
 
 ### 4.2 Logging In to an Existing Account:
 1. In the **👤 Account** tab, select **Login**.
@@ -154,7 +154,7 @@ The workbench interface adapts dynamically based on your logged-in role:
 
 The Sovereign Workbench features a **Shared Institutional Knowledge Base**. Documents uploaded to the system are indexed into local vector storage (ChromaDB) so that all authenticated members can ask questions about policies, course regulations, and reports.
 
-[SCREENSHOT: documents.png - the Documents management tab showing file upload dropzone and ingested document list with chunk counts and delete buttons]
+![the Documents management tab showing file upload dropzone and ingested document list with chunk counts and delete buttons](screenshots/documents.png)
 
 ### 6.1 Supported File Formats:
 - **Plain Text (`.txt`):** Policy manuals, raw notices, text notes.
@@ -195,7 +195,7 @@ When Document Assistant answers a question, it renders:
 - **📚 Citations & Sources Card:** A dedicated card displaying the exact document name (e.g., `attendance_rules.txt`) and chunk excerpt utilized to form the answer.
 - **Compute Latency Note:** Shows cumulative compute time in seconds (e.g., `Latency: 28.4s (28400.0 ms)`).
 
-[SCREENSHOT: chat-answer.png - Document Assistant response in Chat tab showing answer with citations card and execution latency]
+![Document Assistant response in Chat tab showing answer with citations card and execution latency](screenshots/chat-answer.png)
 
 ### 7.3 Understanding Honest Abstention ("I do not know"):
 If you ask a question that is **not** covered in the uploaded documents (e.g., *"What is the quantum computing syllabus for third-year students?"*):
@@ -203,7 +203,7 @@ If you ask a question that is **not** covered in the uploaded documents (e.g., *
 - It will respond honestly: *"I do not know based on the provided documents."*
 - The citations panel changes to `🔍 Retrieved context` to show what text chunks were inspected before the model concluded the information was absent.
 
-[SCREENSHOT: chat-abstain.png - Document Assistant response in Chat tab showing honest abstention 'I do not know' with Retrieved Context card]
+![Document Assistant response in Chat tab showing honest abstention 'I do not know' with Retrieved Context card](screenshots/chat-abstain.png)
 
 ---
 
@@ -226,7 +226,7 @@ Small language models (3B parameters) are prone to arithmetic errors when calcul
 
 The **Data Analyst** agent interacts with structured tabular data in `data/demo.db` (a sample SQLite database containing a 10-row `students` table). Because SQL execution can be dangerous if abused, the workbench enforces **Pre-Validation and Human-in-the-Loop Governance**.
 
-[SCREENSHOT: approvals-card.png - the human-in-the-loop approval card showing proposed SQL query, plain-language explanation note, and Approve/Deny action buttons]
+![the human-in-the-loop approval card showing proposed SQL query, plain-language explanation note, and Approve/Deny action buttons](screenshots/approvals-card.png)
 
 ### 9.1 The `students` Table Schema:
 The sample database table has the following columns:
@@ -266,7 +266,7 @@ You can verify the Data Analyst with these five canonical questions:
 
 Every invocation of an AI agent generates an immutable execution trace. This provides full observability into how the AI made its decisions.
 
-[SCREENSHOT: traces.png - the execution Traces tab showing step-by-step breakdown of LLM, Policy, and Tool execution latencies]
+![the execution Traces tab showing step-by-step breakdown of LLM, Policy, and Tool execution latencies](screenshots/traces.png)
 
 ### 10.1 How to Inspect a Run Trace:
 1. Navigate to the **🔍 Traces** tab.
@@ -287,7 +287,7 @@ Every invocation of an AI agent generates an immutable execution trace. This pro
 
 Users with the **`admin`** role have access to three privileged capabilities:
 
-[SCREENSHOT: audit-log.png - the admin-only Audit Log tab displaying structured security events with masked PII and actor usernames]
+![the admin-only Audit Log tab displaying structured security events with masked PII and actor usernames](screenshots/audit-log.png)
 
 ### 11.1 Inspecting the Audit Log:
 1. Navigate to the **📋 Audit Log** tab.
