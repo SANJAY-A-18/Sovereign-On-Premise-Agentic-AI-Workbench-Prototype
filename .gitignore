@@ -38,3 +38,6 @@ htmlcov/
 # IDE files
 .vscode/
 .idea/
+
+# Personal files
+important files/
