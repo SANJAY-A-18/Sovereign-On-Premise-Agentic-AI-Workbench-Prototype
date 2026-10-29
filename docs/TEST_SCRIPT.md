@@ -63,14 +63,48 @@ Reset development database and vectors to canonical state:
 
 ## 3. Test Data & Baseline Ground Truths
 
-### 3.1 Sample Document: `attendance_rules.txt`
+### 3.1 Sample Knowledge Base Documents in `eval/data/docs/`
+
+#### 1. `attendance_rules.txt` (Comprehensive Student Attendance Code 2026-2027)
 ```text
-University Academic Regulations 2026: Section 4. Attendance Requirements.
-The minimum attendance required for students to be eligible to appear for the end-semester examinations is 75 percent.
-Students maintaining attendance between 65 percent and 74 percent may apply for condonation on valid medical grounds.
-Dr. K. Radhakrishnan serves as the Chief Academic Advisor for student appeals.
-All formal attendance grievance appeals must be submitted within 5 business days of the detention list announcement.
+Apex Institute of Technology - Comprehensive Student Attendance Code 2026-2027
+Document Reference: Policy AC-804/rev3
+Effective Date: August 1, 2026
+Authorized by: Academic Senate and Office of the Registrar
+
+1. Minimum Attendance Threshold
+Under Clause 2.1 of Regulation AC-804, every registered undergraduate student must maintain a minimum aggregate lecture and laboratory attendance of 82 percent in each enrolled course to remain eligible for end-semester examinations. Attendance records are computed from the first instructional day until the final teaching day designated in the academic calendar.
+
+2. Condonation and Medical Concessions
+Where a student fails to attain the mandatory 82 percent requirement due to genuine medical illness, a concession of up to 7 percentage points may be granted. The student must submit Medical Form MED-401 to Chief Medical Officer Dr. K. Radhakrishnan within 5 business days of returning to campus.
+
+Students representing the institute in recognized national tournaments or technical symposia may receive an official duty allowance of up to 10 percent, approved strictly by Dean Prof. Malini Sundaram. Under no circumstances can concessions permit a student with less than 65 percent aggregate attendance to appear for exams; 65 percent is the absolute disqualification floor.
+
+3. Attendance Deficit Surcharge and Remediation
+Candidates with final attendance between 75.0 percent and 81.9 percent must pay a condonation surcharge of Rs 2,450 per course into the bursar account. In addition, these candidates must complete 18 hours of supervised remediation in the library study hall before exam admit cards are released.
+
+4. Biometric Punch-In Protocol
+Attendance tracking is managed via digital biometric scanners. The morning logging window opens at 08:15 AM and closes promptly at 08:35 AM at Kiosk-7. Three late arrivals in a calendar month convert into one unexcused day absence.
+
+5. Grievance Redressal
+Any attendance discrepancies must be lodged formally with the Academic Standing Board in Room 304. The strict deadline for submitting attendance appeals for the autumn term is October 24, 2026. Board decisions are final.
 ```
+
+#### 2. `exam_regulations.txt` (End-Semester Examination Regulations)
+- **Document Reference:** Regulation EXAM-REG-502 (Authorized: Dr. Hemant V. Deshmukh, Controller of Examinations)
+- **Cutoffs & Timings:** Candidates arrive 15 minutes early; hall entry barred 20 minutes after commencement; exit locked during first 45 minutes and final 15 minutes.
+- **Passing Standard:** Minimum 42 percent on theory written paper; aggregate 50 percent combining CIE and written; practical standalone passing mark is 50 percent.
+- **Supplementary Exams:** Up to 2 failed courses within 28 days; registration fee Rs 1,150 per theoretical credit before November 12, 2026.
+- **Malpractice:** Clause 8.4 Level-2 infraction triggers exam cancellation and 2-semester academic suspension (Flying Squad led by Prof. Sunita Chhabra).
+- **Re-Evaluation:** Form RV-11 within 12 calendar days; fee Rs 850 per course script (fully refunded if score variance exceeds 15 percent).
+
+#### 3. `library_rules.txt` (Central Learning Resource Centre Charter 2026)
+- **Document Reference:** Charter LIB-POL-2026-V4 (Supervising Authority: Mrs. Rajeshwari Ramanathan, Chief Librarian)
+- **Borrowing Quotas:** Undergraduates borrow up to 4 volumes simultaneously for 16 calendar days; faculty/doctoral up to 10 volumes for 45 calendar days. Rare manuscripts in Wing C (2nd Floor) cannot be borrowed (inspected on-site using visitor badge `CLRC-SEC-9`).
+- **Overdue Fines:** Rs 15 per day per item for initial 7 days; escalates to Rs 40 per day on day 8; borrowing privileges suspended if overdue > 30 days.
+- **Replacement Policy:** Identical copy within 21 days + administrative surcharge of Rs 600 (or 2.5 times list price if out of print).
+- **Cyber Commons:** 60 computer terminals capped at 90 minutes per student per day; unauthorized P2P triggers 30-day debarment and Rs 3,200 fine.
+- **Night Reading Hours:** Closes at 02:30 AM during test intervals; entry after 10:00 PM requires biometric verification at Terminal Kiosk-L2.
 
 ### 3.2 Canonical `students` Table in `data/demo.db`
 The demo database contains a canonical 10-row dataset for the Data Analyst tool:
@@ -247,12 +281,12 @@ CREATE TABLE students (
 - **Steps:**
   1. Navigate to **💬 Chat** tab.
   2. Ensure **Document Assistant** is selected.
-  3. **Direct Fact:** Enter: `"What is the minimum attendance percentage required for exams?"`. Click **🚀 Run Agent**.
-  4. **Two-Part Fact:** Enter: `"Who is the Chief Academic Advisor and what is the appeal window?"`. Click **🚀 Run Agent**.
+  3. **Direct Fact:** Enter: `"What is the minimum aggregate attendance percentage required to remain eligible for end-semester examinations?"`. Click **🚀 Run Agent**.
+  4. **Two-Part Fact:** Enter: `"Who is the Chief Medical Officer and what is the submission window for Form MED-401?"`. Click **🚀 Run Agent**.
   5. **Unanswerable Fact:** Enter: `"What is the quantum computing curriculum for third-year students?"`. Click **🚀 Run Agent**.
 - **Expected Result:**
-  - Direct fact answered: `75%` or `75 percent`. Citations card shows `[attendance_rules.txt]`.
-  - Two-part fact answered: `Dr. K. Radhakrishnan` and `5 business days`. Citations card rendered.
+  - Direct fact answered: `82%` or `82 percent` (Clause 2.1 of Regulation AC-804). Citations card shows `[attendance_rules.txt]`.
+  - Two-part fact answered: `Dr. K. Radhakrishnan` and `5 business days` (or Chief Medical Officer). Citations card rendered.
   - Unanswerable prompt answered with honest abstention: `I do not know based on the provided documents.` Citations header changes to `🔍 Retrieved context`.
 - **Pass / Fail:** `[ ] Pass  [ ] Fail`
 - **Notes:**
@@ -263,7 +297,7 @@ CREATE TABLE students (
 - **Steps:**
   1. In **📂 Documents** tab, locate `attendance_rules.txt`.
   2. Click the red trashcan button `🗑️`.
-  3. Query Document Assistant: `"What is the minimum attendance percentage?"`.
+  3. Query Document Assistant: `"What is the minimum aggregate attendance percentage required for exams?"`.
 - **Expected Result:**
   - Document removed from table.
   - Vectors purged from ChromaDB collection (count = 0).
@@ -312,7 +346,7 @@ CREATE TABLE students (
 - **Method:** Automated / Manual
 - **Preconditions:** In **💬 Chat** tab.
 - **Steps:**
-  1. Run query A (e.g. `"What is the minimum attendance?"`). Observe answer.
+  1. Run query A (e.g. `"What is the minimum aggregate attendance percentage required for exams?"`). Observe answer.
   2. Run query B (e.g. unanswerable query).
   3. Observe whether previous answer persists or is cleared.
   4. Click **🗑️ Clear Output** button.
@@ -709,7 +743,7 @@ CREATE TABLE students (
 - **Preconditions:** Laptop running native stack; Wi-Fi connected initially.
 - **Steps:**
   1. Disconnect Wi-Fi (enable Windows Airplane Mode or disable Wi-Fi adapter).
-  2. In **💬 Chat** tab, ask Document Assistant: `"What is the minimum attendance?"`.
+  2. In **💬 Chat** tab, ask Document Assistant: `"What is the minimum aggregate attendance percentage required for exams?"`.
   3. Ask: `"What is 15% of 2480?"`.
 - **Expected Result:**
   - Both queries execute cleanly and produce full answers and citations with 0 network timeouts or cloud dependency errors.

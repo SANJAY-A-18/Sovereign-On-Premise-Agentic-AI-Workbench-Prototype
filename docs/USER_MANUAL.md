@@ -186,7 +186,7 @@ The **Document Assistant** is designed for grounded, truthful Question-Answering
 ### 7.1 Asking Effective Questions:
 1. Navigate to the **💬 Chat** tab.
 2. Select **Document Assistant** from the agent dropdown selector.
-3. Type your question in the text area (e.g., *"What is the minimum attendance required for semester examinations?"*).
+3. Type your question in the text area (e.g., *"What is the minimum aggregate attendance percentage required to remain eligible for end-semester examinations?"*).
 4. Click **🚀 Run Agent**.
 
 ### 7.2 Reading Citations and Sources:
@@ -195,7 +195,7 @@ When Document Assistant answers a question, it renders:
 - **📚 Citations & Sources Card:** A dedicated card displaying the exact document name (e.g., `attendance_rules.txt`) and chunk excerpt utilized to form the answer.
 - **Compute Latency Note:** Shows cumulative compute time in seconds (e.g., `Latency: 28.4s (28400.0 ms)`).
 
-![Document Assistant response in Chat tab showing answer with citations card and execution latency](screenshots/chat-answer.png)
+![Document Assistant response in Chat tab answering the 82 percent minimum aggregate attendance question with citations card and execution latency](screenshots/chat-answer.png)
 
 ### 7.3 Understanding Honest Abstention ("I do not know"):
 If you ask a question that is **not** covered in the uploaded documents (e.g., *"What is the quantum computing syllabus for third-year students?"*):
