@@ -136,6 +136,10 @@ Or with PowerShell wrapper:
 
 Detailed offline air-gapped procedures, empirical memory benchmark results, and `.wslconfig` recommendations are in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
+For end-user guidance and manual verification protocols, see:
+- 📖 [**User Manual**](docs/USER_MANUAL.md) — Comprehensive guide for students and staff with step-by-step instructions for all tabs, RAG, calculator, approvals, admin tasks, troubleshooting, and glossary.
+- 🧪 [**Test Script**](docs/TEST_SCRIPT.md) — Step-by-step manual and automated testing script covering 45 functional, security, and governance test cases with pass/fail tracking.
+
 ---
 
 ## Manual Native Windows Host Setup (Alternative)
@@ -332,6 +336,8 @@ The workbench implements an enterprise shared knowledge base architecture backed
 │   ├── FEATURE_MATRIX.md     # Feature-by-feature verification matrix
 │   ├── REVIEW_FINDINGS.md    # Whole-project code review findings and remediation audit
 │   ├── TEST_REPORT.md        # Comprehensive 39-check test execution report
+│   ├── TEST_SCRIPT.md        # Step-by-step manual and automated test script (45 cases)
+│   ├── USER_MANUAL.md        # Plain-language end-user guide and troubleshooting manual
 │   └── prompts/              # Prompt references (MASTER_PROTOTYPE_PROMPT.md)
 ├── eval/
 │   ├── data/                 # Frozen benchmark datasets (FROZEN.sha256, DISTRACTORS.sha256)
@@ -349,7 +355,9 @@ The workbench implements an enterprise shared knowledge base architecture backed
 │   ├── reset_dev_state.py    # Clean-state reset tool (with --no-backup support)
 │   ├── reset_dev_state.ps1   # PowerShell clean-state reset wrapper
 │   ├── run_native.ps1        # One-command dual-server native startup script
-│   └── run_regression_suite.py # 15-prompt regression suite runner
+│   ├── run_regression_suite.py # 15-prompt regression suite runner
+│   ├── run_test_script.py    # Automated test runner across all test script check categories
+│   └── run_test_script.ps1   # PowerShell wrapper for run_test_script.py
 ├── tests/                    # 128 comprehensive offline unit, lifecycle & integration tests
 ├── .dockerignore             # Docker build context exclusions (.venv, data, caches, .git)
 ├── docker-compose.yml        # Docker compose stack specification (backend + ui)
