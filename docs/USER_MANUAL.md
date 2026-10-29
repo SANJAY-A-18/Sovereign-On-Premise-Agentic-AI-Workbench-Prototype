@@ -186,7 +186,7 @@ The **Document Assistant** is designed for grounded, truthful Question-Answering
 ### 7.1 Asking Effective Questions:
 1. Navigate to the **💬 Chat** tab.
 2. Select **Document Assistant** from the agent dropdown selector.
-3. Type your question in the text area (e.g., *"What is the minimum aggregate attendance percentage required to remain eligible for end-semester examinations?"*).
+3. Type your question in the text area (e.g., *"Under Clause 2.1 of Regulation AC-804, what is the mandatory minimum attendance percentage?"*).
 4. Click **🚀 Run Agent**.
 
 ### 7.2 Reading Citations and Sources:
