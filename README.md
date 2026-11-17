@@ -244,7 +244,7 @@ streamlit run ui/app.py --server.port 8501
 ```powershell
 .\.venv\Scripts\pytest -m "not live"
 ```
-**Test Count:** **128 passed tests** (0 failed, 2 deselected live tests) covering:
+**Test Count:** **130 passed tests** (0 failed, 2 deselected live tests) covering:
 - Agent JSON parsing, recursive unwrapping, and malformed wrapper key repair (`tests/test_agent_parsing.py`)
 - API endpoints & security contracts (`tests/test_api.py`)
 - Pre-approval SQL static validation, runtime SQLite schema injection & loop prevention (`tests/test_data_analyst_prevalidation.py`)
@@ -358,7 +358,7 @@ The workbench implements an enterprise shared knowledge base architecture backed
 │   ├── run_regression_suite.py # 15-prompt regression suite runner
 │   ├── run_test_script.py    # Automated test runner across all test script check categories
 │   └── run_test_script.ps1   # PowerShell wrapper for run_test_script.py
-├── tests/                    # 128 comprehensive offline unit, lifecycle & integration tests
+├── tests/                    # 130 comprehensive offline unit, lifecycle & integration tests
 ├── .dockerignore             # Docker build context exclusions (.venv, data, caches, .git)
 ├── docker-compose.yml        # Docker compose stack specification (backend + ui)
 ├── .env.example              # Documented environment variable template

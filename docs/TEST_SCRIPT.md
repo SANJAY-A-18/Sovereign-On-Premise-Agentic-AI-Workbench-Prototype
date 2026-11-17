@@ -697,7 +697,7 @@ CREATE TABLE students (
 - **Steps:**
   1. Run `.venv\Scripts\pytest -m "not live" -q`.
 - **Expected Result:**
-  - All 128 offline tests pass (0 failures).
+  - All 130 offline tests pass (0 failures).
 - **Pass / Fail:** `[ ] Pass  [ ] Fail`
 - **Notes:**
 
